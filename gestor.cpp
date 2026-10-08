@@ -1,50 +1,41 @@
-
 #include <zmq.hpp>
 #include <iostream>
 #include <sstream>
-#include "persistencia.h"
-#include "cancelaciones.h"
+#include <string>
+
 int main() {
     zmq::context_t context(1);
-    zmq::socket_t socket(context, ZMQ_REP);
-    socket.bind("tcp://*:5555");
 
-    std::cout << "Gestor de Transacciones escuchando en puerto 5555..." << std::endl;
+    // Socket REP para clientes (escucha en 5555)
+    zmq::socket_t socketClientes(context, ZMQ_REP);
+    socketClientes.bind("tcp://*:5555");
+    std::cout << "Gestor escuchando clientes en puerto 5555..." << std::endl;
+
+    // Socket REQ para persistencia (se conecta al 6666)
+    zmq::socket_t socketPersistencia(context, ZMQ_REQ);
+    socketPersistencia.connect("tcp://10.43.49.231:6666"); // IP de la VM de persistencia
+    std::cout << "Gestor conectado a persistencia en puerto 6666..." << std::endl;
 
     while (true) {
+        // Recibir solicitud del cliente
         zmq::message_t request;
-        zmq::recv_result_t result = socket.recv(request, zmq::recv_flags::none);
+        auto result = socketClientes.recv(request, zmq::recv_flags::none);
         std::string msg(static_cast<char*>(request.data()), request.size());
-	std::cout<<"solicitud recivida: "<<msg<<std::endl;
-        std::string respuesta;
+        std::cout << "[Gestor] Solicitud recibida: " << msg << std::endl;
 
-        if (msg == "CONSULTA") {
-            respuesta = consultarEventos();
-        } else if (msg.rfind("RESERVA", 0) == 0) {
-            std::istringstream iss(msg);
-            std::string cmd, idEvento, cliente;
-            int numAsientos;
-            iss >> cmd >> idEvento >> cliente >> numAsientos;
-            respuesta = reservarAsientos(idEvento, cliente, numAsientos);
-        } else if(msg.rfind("ELIMINAR",0)==0){
-	    std::istringstream iss(msg);
-	    std::string cmd, idEvento, cliente;
-	    iss >> cmd >> idEvento;
-   	    std::getline(iss, cliente);
+        // Reenviar la solicitud a la persistencia
+        zmq::message_t reqPersistencia(msg.size());
+        memcpy(reqPersistencia.data(), msg.data(), msg.size());
+        socketPersistencia.send(reqPersistencia, zmq::send_flags::none);
 
-	    if (!cliente.empty() && cliente[0] == ' ') cliente.erase(0,1);
+        // Recibir respuesta de la persistencia
+        zmq::message_t respPersistencia;
+        auto resultpersistencia = socketPersistencia.recv(respPersistencia, zmq::recv_flags::none);
+        std::string respuesta(static_cast<char*>(respPersistencia.data()), respPersistencia.size());
 
-	    std::cout << "[DEBUG gestor] cmd=" << cmd 
-	              << ", idEvento=" << idEvento 
-	              << ", cliente=" << cliente << std::endl;
-
-	    respuesta = eliminarReserva(idEvento, cliente);
-	}else{
-            respuesta = "Comando no reconocido";
-        }
-
+        // Enviar respuesta al cliente
         zmq::message_t reply(respuesta.size());
-        memcpy(reply.data(), respuesta.c_str(), respuesta.size());
-        zmq::send_result_t sent = socket.send(reply, zmq::send_flags::none);
+        memcpy(reply.data(), respuesta.data(), respuesta.size());
+        socketClientes.send(reply, zmq::send_flags::none);
     }
 }
