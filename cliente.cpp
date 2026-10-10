@@ -1,17 +1,7 @@
-// cliente.cpp  -  corre en la VM1 (capa de consumidores)
-//
-// Envia solicitudes al Gestor de Transacciones con REQ/REP: envia y espera la respuesta.
-//
-// Uso:
-//   ./cliente                              menu interactivo
-//   ./cliente <archivo> [solicitudesMin]   envia las operaciones del archivo, por defecto 20 por minuto,
-//                                          y guarda el tiempo de cada una en metricas_<archivo>.csv
-//
-// Formato del archivo (una operacion por linea, igual que los mensajes del sistema):
-//   CONSULTA 2026-11
-//   RESERVA E5 2026-11-02 juan 3
-//   ELIMINAR E5 juan
-// Para varios clientes simultaneos se lanzan varios procesos, cada uno con su archivo.
+// Cliente (VM1)
+// ./cliente                    -> menu
+// ./cliente archivo.txt 20     -> manda las operaciones del archivo, 20 por minuto
+// formato del archivo: CONSULTA 2026-11 / RESERVA E5 2026-11-02 juan 3 / ELIMINAR E5 2026-11-02 juan
 
 #include <zmq.hpp>
 #include <iostream>
@@ -19,9 +9,8 @@
 #include <string>
 #include <chrono>
 #include <thread>
-#include "config.h"
 
-// Envia una solicitud, espera la respuesta y mide el tiempo en milisegundos.
+// manda una solicitud al gestor, espera la respuesta y mide cuanto se demoro (ms)
 std::string enviarSolicitud(zmq::socket_t& socket, const std::string& solicitud, double& ms) {
     auto inicio = std::chrono::steady_clock::now();
 
@@ -33,50 +22,51 @@ std::string enviarSolicitud(zmq::socket_t& socket, const std::string& solicitud,
     zmq::recv_result_t result = socket.recv(reply, zmq::recv_flags::none);
     std::string respuesta(static_cast<char*>(reply.data()), reply.size());
 
-    ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - inicio).count();
+    auto fin = std::chrono::steady_clock::now();
+    ms = std::chrono::duration<double, std::milli>(fin - inicio).count();
     return respuesta;
 }
 
-// Modo archivo: genera la carga a la tasa indicada (solicitudes por minuto).
+// lee las operaciones de un archivo y las manda una por una (porMinuto = solicitudes por minuto)
 void modoArchivo(zmq::socket_t& socket, const std::string& ruta, int porMinuto) {
     std::ifstream archivo(ruta);
     if (!archivo) {
         std::cout << "No se encontro " << ruta << std::endl;
         return;
     }
-    std::string nombre = ruta.substr(ruta.find_last_of('/') + 1);
-    std::ofstream csv("metricas_" + nombre + ".csv");
+    std::ofstream csv("metricas_" + ruta + ".csv");
     csv << "operacion,ms,resultado" << std::endl;
-    auto pausa = std::chrono::milliseconds(60000 / porMinuto);   // 20 por minuto = una cada 3 s
+    int espera = 60000 / porMinuto;   // 20 por minuto = una cada 3000 ms
 
     std::string linea;
     while (std::getline(archivo, linea)) {
         if (linea.empty() || linea[0] == '#') continue;
-        auto siguiente = std::chrono::steady_clock::now() + pausa;
 
         double ms;
         std::string respuesta = enviarSolicitud(socket, linea, ms);
-        std::string primeraLinea = respuesta.substr(0, respuesta.find('\n'));
-        std::cout << linea << "  =>  " << primeraLinea << "  (" << (int)ms << " ms)" << std::endl;
-
         std::string operacion = linea.substr(0, linea.find(' '));
-        std::string resultado = primeraLinea.substr(0, primeraLinea.find_first_of(":\n "));
+        std::string resultado = "RECHAZO";
+        if (respuesta.substr(0, 5) == "EXITO") resultado = "EXITO";
+        if (respuesta.substr(0, 8) == "RECIBIDO") resultado = "RECIBIDO";
+
+        std::cout << linea << "  =>  " << respuesta.substr(0, respuesta.find('\n'))
+                  << "  (" << (int)ms << " ms)" << std::endl;
         csv << operacion << "," << ms << "," << resultado << std::endl;
 
-        std::this_thread::sleep_until(siguiente);
+        std::this_thread::sleep_for(std::chrono::milliseconds(espera));
     }
-    std::cout << "Terminado. Tiempos guardados en metricas_" << nombre << ".csv" << std::endl;
+    std::cout << "Terminado. Tiempos guardados en metricas_" << ruta << ".csv" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
-    auto cfg = leerConfig();
     zmq::context_t context(1);
     zmq::socket_t socket(context, ZMQ_REQ);
-    socket.connect(direccion(cfg, "GESTOR"));
-    std::cout << "Conectando al Gestor en " << direccion(cfg, "GESTOR") << std::endl;
-
+    socket.connect("tcp://10.43.100.44:5555");
+    
     if (argc > 1) {
-        modoArchivo(socket, argv[1], argc > 2 ? std::stoi(argv[2]) : 20);
+        int porMinuto = 20;
+        if (argc > 2) porMinuto = std::stoi(argv[2]);
+        modoArchivo(socket, argv[1], porMinuto);
         return 0;
     }
 
@@ -109,12 +99,14 @@ int main(int argc, char* argv[]) {
 		std::cin>>numAsientos;
 		solicitud = "RESERVA " + idEvento + " " + fecha + " " + cliente + " " + std::to_string(numAsientos);
 	} else if (accion == "eliminar" || accion == "3") {
-        	std::string idEvento, cliente;
+        	std::string idEvento, fecha, cliente;
         	std::cout << "Ingrese ID del evento a cancelar: ";
         	std::cin >> idEvento;
+        	std::cout << "Ingrese la fecha (AAAA-MM-DD): ";
+        	std::cin >> fecha;
         	std::cout << "Ingrese nombre del cliente: ";
         	std::cin >> cliente;
-        	solicitud = "ELIMINAR " + idEvento + " " + cliente;
+        	solicitud = "ELIMINAR " + idEvento + " " + fecha + " " + cliente;
 	} else if (accion == "0") {
 		break;
 	}else{

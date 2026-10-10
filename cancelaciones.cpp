@@ -1,35 +1,28 @@
-// cancelaciones.cpp  -  corre en la VM2 (capa de logica de negocio)
-//
-// Servicio de Cancelaciones y Notificaciones (canal asincrono).
-// El Gestor le empuja (PUSH) las cancelaciones y sigue atendiendo sin esperar.
-// Este servicio ordena a la Persistencia liberar los asientos.
-//
-// En la 1a entrega no se pide la cancelacion; el proceso existe porque es parte de la
-// arquitectura base (Figura 1). La notificacion al cliente (PUB/SUB) va en la 2a entrega.
+// Servicio de cancelaciones (VM2)
+// recibe las cancelaciones del gestor y le pide a persistencia liberar los asientos
+// la notificacion al cliente queda para la segunda entrega
 
 #include <zmq.hpp>
 #include <iostream>
 #include <string>
-#include "config.h"
 
 int main() {
-    auto cfg = leerConfig();
     zmq::context_t context(1);
 
-    // PULL: recibe lo que el Gestor envia con PUSH
+    // Socket PULL, recibe lo que manda el gestor
     zmq::socket_t socketGestor(context, ZMQ_PULL);
-    socketGestor.bind("tcp://*:" + cfg["CANCELACION_PUERTO"]);
+    socketGestor.bind("tcp://*:5557");
 
-    // REQ hacia la Persistencia para liberar asientos
+    // Socket REQ para la persistencia
     zmq::socket_t socketPersistencia(context, ZMQ_REQ);
-    socketPersistencia.connect(direccion(cfg, "PERSISTENCIA"));
+    socketPersistencia.connect("tcp://10.43.99.231:6666"); // IP de la VM de persistencia
 
-    std::cout << "[Cancelacion] Esperando cancelaciones en puerto " << cfg["CANCELACION_PUERTO"] << "..." << std::endl;
+    std::cout << "Cancelaciones escuchando en puerto 5557..." << std::endl;
 
     while (true) {
         zmq::message_t request;
         auto res = socketGestor.recv(request, zmq::recv_flags::none);
-        std::string msg(static_cast<char*>(request.data()), request.size());   // "ELIMINAR E5 juan"
+        std::string msg(static_cast<char*>(request.data()), request.size());   // ej: "ELIMINAR E5 2026-11-02 juan"
         std::cout << "[Cancelacion] Recibido: " << msg << std::endl;
 
         socketPersistencia.send(zmq::buffer(msg), zmq::send_flags::none);

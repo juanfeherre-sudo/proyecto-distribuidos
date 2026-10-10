@@ -21,14 +21,13 @@ ls /usr/include/zmq.hpp || wget https://raw.githubusercontent.com/zeromq/cppzmq/
 make
 ```
 
-## 3. Configurar las IPs
-`config.txt` es el mismo en las 3 VMs. Viene con `127.0.0.1` (todo en un solo computador).
-Para las 3 VMs, cambiar estas dos líneas con la IP real (`hostname -I`):
-```
-GESTOR_IP=<IP de la VM2>
-PERSISTENCIA_IP=<IP de la VM3>
-```
-`RMC_IP` y `CANCELACION_IP` se dejan en `127.0.0.1`: están en la misma VM que el gestor.
+## 3. IPs
+Las IPs están escritas en cada programa:
+- `cliente.cpp` se conecta al gestor en `10.43.100.44:5555` (VM2).
+- `rmc.cpp` y `cancelaciones.cpp` se conectan a la persistencia en `10.43.99.231:6666` (VM3).
+- `gestor.cpp` se conecta al RMC (`localhost:5556`) y a cancelaciones (`localhost:5557`), que están en su misma VM.
+
+Si cambian las VMs, se cambian esas líneas y se vuelve a compilar con `make`.
 Si hay firewall: `sudo ufw allow 5555:5557/tcp` (VM2) y `sudo ufw allow 6666/tcp` (VM3).
 
 ## 4. Ejecutar (en este orden, cada uno en su terminal)
@@ -55,12 +54,12 @@ Para varios clientes simultáneos se lanzan varios procesos `./cliente`, cada un
 |---|---|---|
 | Cliente → Gestor → RMC | `CONSULTA <AAAA-MM>` | `EXITO` + lista, o `RECHAZO: ...` |
 | Cliente → Gestor → RMC | `RESERVA <evento> <AAAA-MM-DD> <cliente> <n>` | `EXITO: reserva ...` o `RECHAZO: ...` |
-| Cliente → Gestor → Cancelación | `ELIMINAR <evento> <cliente>` | `RECIBIDO` inmediato (asíncrono) |
+| Cliente → Gestor → Cancelación | `ELIMINAR <evento> <fecha> <cliente>` | `RECIBIDO` inmediato (asíncrono) |
 | RMC → Persistencia | `CONSULTA <mes>` · `DISPONIBLES <evento> <fecha>` · `RESERVAR <evento> <fecha> <cliente> <n>` | lista · asientos libres (-1 si no existe) · `OK <id>` o `SIN_CUPO` |
-| Cancelación → Persistencia | `ELIMINAR <evento> <cliente>` | asientos liberados |
+| Cancelación → Persistencia | `ELIMINAR <evento> <fecha> <cliente>` | asientos liberados |
 
 ## 7. Qué muestra cada consola
-- **Persistencia:** el estado completo de la BD al arrancar, cada orden y cómo queda la ocurrencia tras cada reserva (`BD -> E5 2026-11-02: libres=97 ocupados=3`).
+- **Persistencia:** el estado completo de la BD al arrancar, cada orden y cómo queda la ocurrencia tras cada reserva (`BD -> Evento: E5 | Fecha: 2026-11-02 | Libres: 97 | Ocupados: 3`).
 - **RMC:** cada solicitud, lo que le pregunta a la persistencia y el resultado (ÉXITO o RECHAZO).
-- **Gestor:** cada solicitud y respuesta; cada minuto el TPM (también en `tpm.csv`).
+- **Gestor:** cada solicitud y respuesta; cada minuto el TPM.
 - **Cliente:** el resultado y el tiempo de respuesta de cada solicitud (también en `metricas_<archivo>.csv`).
