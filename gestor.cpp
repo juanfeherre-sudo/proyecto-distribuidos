@@ -1,42 +1,33 @@
-// gestor.cpp  -  corre en la VM2 (capa de logica de negocio)
-//
-// Gestor de Transacciones (GT): puerta de entrada del sistema. Segun el tipo de solicitud
-// la enruta por el canal sincrono o el asincrono:
-//   - CONSULTA / RESERVA / MODIFICACION -> RMC (REQ/REP), espera la respuesta y la devuelve.
-//   - ELIMINAR (cancelacion)            -> servicio de cancelacion (PUSH), responde de inmediato.
-// Tambien cuenta las transacciones por minuto (TPM) para las pruebas de rendimiento.
+// Gestor de transacciones (VM2)
+// consulta y reserva van al RMC, las cancelaciones van a cancelaciones por PUSH
 
 #include <zmq.hpp>
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <map>
-#include <chrono>
-#include <fstream>
-#include "config.h"
+#include <ctime>
 
 int main() {
-    auto cfg = leerConfig();
     zmq::context_t context(1);
 
     // Socket REP para clientes
     zmq::socket_t socketClientes(context, ZMQ_REP);
-    socketClientes.bind("tcp://*:" + cfg["GESTOR_PUERTO"]);
-    std::cout << "[Gestor] Escuchando clientes en puerto " << cfg["GESTOR_PUERTO"] << "..." << std::endl;
+    socketClientes.bind("tcp://*:5555");
+    std::cout << "Gestor escuchando clientes en puerto 5555..." << std::endl;
 
-    // Canal sincrono: socket REQ hacia el RMC
+    // Socket REQ para el RMC (sincrono)
     zmq::socket_t socketRMC(context, ZMQ_REQ);
-    socketRMC.connect(direccion(cfg, "RMC"));
-    std::cout << "[Gestor] Conectado al RMC en " << direccion(cfg, "RMC") << std::endl;
+    socketRMC.connect("tcp://localhost:5556"); // el RMC esta en la misma VM
+    std::cout << "Gestor conectado al RMC en puerto 5556..." << std::endl;
 
-    // Canal asincrono: socket PUSH hacia el servicio de cancelacion (send no espera respuesta)
+    // Socket PUSH para cancelaciones (asincrono, no espera respuesta)
     zmq::socket_t socketCancelacion(context, ZMQ_PUSH);
-    socketCancelacion.connect(direccion(cfg, "CANCELACION"));
+    socketCancelacion.connect("tcp://localhost:5557");
 
-    // TPM: transacciones exitosas por tipo en el minuto actual
-    std::map<std::string, int> tpm;
-    auto inicioMinuto = std::chrono::steady_clock::now();
-    std::ofstream archivoTPM("tpm.csv", std::ios::app);
+    // contadores para las transacciones por minuto (TPM)
+    int consultasMinuto = 0;
+    int reservasMinuto = 0;
+    time_t inicioMinuto = time(nullptr);
 
     while (true) {
         // Recibir solicitud del cliente
@@ -51,14 +42,18 @@ int main() {
         std::string respuesta;
 
         if (tipo == "CONSULTA" || tipo == "RESERVA" || tipo == "MODIFICACION") {
-            // Canal sincrono: reenviar al RMC y esperar su respuesta
+            // se manda al RMC y se espera la respuesta
             socketRMC.send(zmq::buffer(msg), zmq::send_flags::none);
             zmq::message_t respRMC;
             auto resultRMC = socketRMC.recv(respRMC, zmq::recv_flags::none);
             respuesta = std::string(static_cast<char*>(respRMC.data()), respRMC.size());
-            if (respuesta.rfind("EXITO", 0) == 0) tpm[tipo]++;
+
+            if (respuesta.substr(0, 5) == "EXITO") {
+                if (tipo == "CONSULTA") consultasMinuto++;
+                if (tipo == "RESERVA") reservasMinuto++;
+            }
         } else if (tipo == "ELIMINAR") {
-            // Canal asincrono: se encola la cancelacion y se responde sin esperar
+            // se manda a cancelaciones y se responde de una vez, sin esperar
             socketCancelacion.send(zmq::buffer(msg), zmq::send_flags::none);
             respuesta = "RECIBIDO: cancelacion en proceso";
         } else {
@@ -66,16 +61,16 @@ int main() {
         }
 
         // Enviar respuesta al cliente
-        std::cout << "[Gestor] Respuesta: " << respuesta.substr(0, respuesta.find('\n')) << std::endl;
+        std::cout << "[Gestor] Respuesta enviada al cliente" << std::endl;
         socketClientes.send(zmq::buffer(respuesta), zmq::send_flags::none);
 
-        // Cada minuto se registra el TPM y se reinician los contadores
-        auto ahora = std::chrono::steady_clock::now();
-        if (ahora - inicioMinuto >= std::chrono::minutes(1)) {
-            std::cout << "[Gestor] TPM consultas=" << tpm["CONSULTA"] << " reservas=" << tpm["RESERVA"] << std::endl;
-            archivoTPM << tpm["CONSULTA"] << "," << tpm["RESERVA"] << std::endl;
-            tpm.clear();
-            inicioMinuto = ahora;
+        // cada minuto se muestra el TPM y se reinician los contadores
+        if (time(nullptr) - inicioMinuto >= 60) {
+            std::cout << "[Gestor] TPM -> consultas: " << consultasMinuto
+                      << " reservas: " << reservasMinuto << std::endl;
+            consultasMinuto = 0;
+            reservasMinuto = 0;
+            inicioMinuto = time(nullptr);
         }
     }
 }
