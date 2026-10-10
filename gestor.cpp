@@ -13,7 +13,7 @@ int main() {
 
     // Socket REQ para persistencia (se conecta al 6666)
     zmq::socket_t socketPersistencia(context, ZMQ_REQ);
-    socketPersistencia.connect("tcp://10.43.49.231:6666"); // IP de la VM de persistencia
+    socketPersistencia.connect("tcp://10.43.100.44:6666"); // IP de la VM de persistencia
     std::cout << "Gestor conectado a persistencia en puerto 6666..." << std::endl;
 
     while (true) {
@@ -26,8 +26,11 @@ int main() {
         // Reenviar la solicitud a la persistencia
         zmq::message_t reqPersistencia(msg.size());
         memcpy(reqPersistencia.data(), msg.data(), msg.size());
-        socketPersistencia.send(reqPersistencia, zmq::send_flags::none);
+	std::string msgComprobacion(static_cast<char*>(reqPersistencia.data()), msg.size());
 
+	std::cout << "[DEBUG gestor] msg original: " << msg << std::endl;
+	std::cout << "[DEBUG gestor] msg copiado:  " << msgComprobacion << std::endl;
+        socketPersistencia.send(reqPersistencia, zmq::send_flags::none);
         // Recibir respuesta de la persistencia
         zmq::message_t respPersistencia;
         auto resultpersistencia = socketPersistencia.recv(respPersistencia, zmq::recv_flags::none);
