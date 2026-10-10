@@ -1,0 +1,19 @@
+# Direcciones de los servicios. Este MISMO archivo va en las 3 VMs.
+# 127.0.0.1 = "este mismo computador". Sirve solo si todo corre en una maquina.
+# Para las 3 VMs: poner la IP real (se ve con: hostname -I).
+
+# VM2 (10.43.100.44) - Gestor de Transacciones. Los clientes (VM1, 10.43.99.218) se conectan aqui.
+GESTOR_IP=10.43.100.44
+GESTOR_PUERTO=5555
+
+# VM2 - RMC. Esta en la misma VM que el gestor, por eso 127.0.0.1.
+RMC_IP=127.0.0.1
+RMC_PUERTO=5556
+
+# VM2 - Servicio de cancelacion. Misma VM que el gestor.
+CANCELACION_IP=127.0.0.1
+CANCELACION_PUERTO=5557
+
+# VM3 (10.43.99.231) - Persistencia. El RMC y cancelacion (VM2) se conectan aqui.
+PERSISTENCIA_IP=10.43.99.231
+PERSISTENCIA_PUERTO=6666

@@ -1,18 +1,94 @@
+-- Base de datos inicial del SRB: 50 eventos en noviembre de 2026.
+-- E1 a E20 tienen dos ocurrencias en el mes; E21 a E50 solo una. Cada ocurrencia tiene 100 asientos.
+-- Para el caso de prueba del profesor: copiar este archivo, cambiar los INSERT y ejecutar ./persistencia <archivo>.sql
+DROP TABLE IF EXISTS Reservas;
+DROP TABLE IF EXISTS Eventos;
+
 CREATE TABLE Eventos (
-	idEvento TEXT PRIMARY KEY,
+	idEvento TEXT,
 	fecha TEXT,
 	asientosLibres INTEGER,
-	asientosOcupados INTEGER
+	asientosOcupados INTEGER,
+	PRIMARY KEY (idEvento, fecha),
+	CHECK (asientosLibres >= 0)
 );
 
 CREATE TABLE Reservas (
 	idReservas INTEGER PRIMARY KEY AUTOINCREMENT,
 	idEvento TEXT,
+	fecha TEXT,
 	cliente TEXT,
 	numAsientos INTEGER,
-	FOREIGN KEY (idEvento) REFERENCES Eventos(idEvento)
+	FOREIGN KEY (idEvento, fecha) REFERENCES Eventos(idEvento, fecha)
 );
 
-INSERT INTO Eventos VALUES ('E1', '2026-10-15', 100, 0);
-INSERT INTO Eventos VALUES ('E2', '2026-10-20', 100, 0);
-INSERT INTO Eventos VALUES ('E2b', '2026-10-25', 100, 0);
+INSERT INTO Eventos VALUES ('E1', '2026-11-06', 100, 0);
+INSERT INTO Eventos VALUES ('E1', '2026-11-18', 100, 0);
+INSERT INTO Eventos VALUES ('E2', '2026-11-07', 100, 0);
+INSERT INTO Eventos VALUES ('E2', '2026-11-26', 100, 0);
+INSERT INTO Eventos VALUES ('E3', '2026-11-01', 100, 0);
+INSERT INTO Eventos VALUES ('E3', '2026-11-17', 100, 0);
+INSERT INTO Eventos VALUES ('E4', '2026-11-14', 100, 0);
+INSERT INTO Eventos VALUES ('E4', '2026-11-24', 100, 0);
+INSERT INTO Eventos VALUES ('E5', '2026-11-02', 100, 0);
+INSERT INTO Eventos VALUES ('E5', '2026-11-21', 100, 0);
+INSERT INTO Eventos VALUES ('E6', '2026-11-10', 100, 0);
+INSERT INTO Eventos VALUES ('E6', '2026-11-16', 100, 0);
+INSERT INTO Eventos VALUES ('E7', '2026-11-09', 100, 0);
+INSERT INTO Eventos VALUES ('E7', '2026-11-19', 100, 0);
+INSERT INTO Eventos VALUES ('E8', '2026-11-01', 100, 0);
+INSERT INTO Eventos VALUES ('E8', '2026-11-17', 100, 0);
+INSERT INTO Eventos VALUES ('E9', '2026-11-07', 100, 0);
+INSERT INTO Eventos VALUES ('E9', '2026-11-22', 100, 0);
+INSERT INTO Eventos VALUES ('E10', '2026-11-02', 100, 0);
+INSERT INTO Eventos VALUES ('E10', '2026-11-19', 100, 0);
+INSERT INTO Eventos VALUES ('E11', '2026-11-02', 100, 0);
+INSERT INTO Eventos VALUES ('E11', '2026-11-24', 100, 0);
+INSERT INTO Eventos VALUES ('E12', '2026-11-07', 100, 0);
+INSERT INTO Eventos VALUES ('E12', '2026-11-16', 100, 0);
+INSERT INTO Eventos VALUES ('E13', '2026-11-14', 100, 0);
+INSERT INTO Eventos VALUES ('E13', '2026-11-25', 100, 0);
+INSERT INTO Eventos VALUES ('E14', '2026-11-02', 100, 0);
+INSERT INTO Eventos VALUES ('E14', '2026-11-19', 100, 0);
+INSERT INTO Eventos VALUES ('E15', '2026-11-11', 100, 0);
+INSERT INTO Eventos VALUES ('E15', '2026-11-26', 100, 0);
+INSERT INTO Eventos VALUES ('E16', '2026-11-10', 100, 0);
+INSERT INTO Eventos VALUES ('E16', '2026-11-16', 100, 0);
+INSERT INTO Eventos VALUES ('E17', '2026-11-10', 100, 0);
+INSERT INTO Eventos VALUES ('E17', '2026-11-25', 100, 0);
+INSERT INTO Eventos VALUES ('E18', '2026-11-07', 100, 0);
+INSERT INTO Eventos VALUES ('E18', '2026-11-16', 100, 0);
+INSERT INTO Eventos VALUES ('E19', '2026-11-04', 100, 0);
+INSERT INTO Eventos VALUES ('E19', '2026-11-16', 100, 0);
+INSERT INTO Eventos VALUES ('E20', '2026-11-09', 100, 0);
+INSERT INTO Eventos VALUES ('E20', '2026-11-29', 100, 0);
+INSERT INTO Eventos VALUES ('E21', '2026-11-03', 100, 0);
+INSERT INTO Eventos VALUES ('E22', '2026-11-05', 100, 0);
+INSERT INTO Eventos VALUES ('E23', '2026-11-07', 100, 0);
+INSERT INTO Eventos VALUES ('E24', '2026-11-03', 100, 0);
+INSERT INTO Eventos VALUES ('E25', '2026-11-09', 100, 0);
+INSERT INTO Eventos VALUES ('E26', '2026-11-02', 100, 0);
+INSERT INTO Eventos VALUES ('E27', '2026-11-10', 100, 0);
+INSERT INTO Eventos VALUES ('E28', '2026-11-05', 100, 0);
+INSERT INTO Eventos VALUES ('E29', '2026-11-09', 100, 0);
+INSERT INTO Eventos VALUES ('E30', '2026-11-14', 100, 0);
+INSERT INTO Eventos VALUES ('E31', '2026-11-11', 100, 0);
+INSERT INTO Eventos VALUES ('E32', '2026-11-03', 100, 0);
+INSERT INTO Eventos VALUES ('E33', '2026-11-02', 100, 0);
+INSERT INTO Eventos VALUES ('E34', '2026-11-10', 100, 0);
+INSERT INTO Eventos VALUES ('E35', '2026-11-10', 100, 0);
+INSERT INTO Eventos VALUES ('E36', '2026-11-11', 100, 0);
+INSERT INTO Eventos VALUES ('E37', '2026-11-04', 100, 0);
+INSERT INTO Eventos VALUES ('E38', '2026-11-06', 100, 0);
+INSERT INTO Eventos VALUES ('E39', '2026-11-02', 100, 0);
+INSERT INTO Eventos VALUES ('E40', '2026-11-09', 100, 0);
+INSERT INTO Eventos VALUES ('E41', '2026-11-12', 100, 0);
+INSERT INTO Eventos VALUES ('E42', '2026-11-02', 100, 0);
+INSERT INTO Eventos VALUES ('E43', '2026-11-10', 100, 0);
+INSERT INTO Eventos VALUES ('E44', '2026-11-01', 100, 0);
+INSERT INTO Eventos VALUES ('E45', '2026-11-10', 100, 0);
+INSERT INTO Eventos VALUES ('E46', '2026-11-04', 100, 0);
+INSERT INTO Eventos VALUES ('E47', '2026-11-08', 100, 0);
+INSERT INTO Eventos VALUES ('E48', '2026-11-11', 100, 0);
+INSERT INTO Eventos VALUES ('E49', '2026-11-09', 100, 0);
+INSERT INTO Eventos VALUES ('E50', '2026-11-07', 100, 0);

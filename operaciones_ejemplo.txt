@@ -1,0 +1,9 @@
+# Operaciones de prueba del cliente. Una por linea (lineas con # se ignoran).
+CONSULTA 2026-11
+RESERVA E5 2026-11-02 juan 3
+RESERVA E5 2026-11-21 ana 10
+RESERVA E30 2026-11-14 pedro 98
+RESERVA E30 2026-11-14 maria 5
+RESERVA E99 2026-11-10 juan 2
+RESERVA E5 2026-11-02 juan 0
+CONSULTA 2026-12
