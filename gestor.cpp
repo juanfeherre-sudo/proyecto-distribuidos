@@ -1,44 +1,67 @@
-#include <zmq.hpp>
-#include <iostream>
-#include <sstream>
-#include <string>
+// gestor.cpp  —  corre en la VM2 (capa de lógica de negocio)
+//
+// Gestor de Transacciones (GT): la puerta de entrada del sistema. No aplica reglas;
+// solo mira el tipo de solicitud y la enruta por el canal que corresponde:
+//   - Canal síncrono  (CONSULTA, RESERVA, MODIFICACION) -> RMC, espera su respuesta y la devuelve.
+//   - Canal asíncrono (CANCELACION) -> la empuja al servicio de cancelación y responde
+//     "RECIBIDO" de inmediato, sin esperar a que se procese.
+// También cuenta las transacciones por minuto (TPM), que se usan en las pruebas de rendimiento.
+
+#include "common.hpp"
 
 int main() {
-    zmq::context_t context(1);
+    auto cfg = leerConfig();
+    zmq::context_t contexto(1);
 
-    // Socket REP para clientes (escucha en 5555)
-    zmq::socket_t socketClientes(context, ZMQ_REP);
-    socketClientes.bind("tcp://*:5555");
-    std::cout << "Gestor escuchando clientes en puerto 5555..." << std::endl;
+    // Clientes -> Gestor: REP. Recibe una solicitud, responde, y pasa a la siguiente.
+    zmq::socket_t clientes(contexto, zmq::socket_type::rep);
+    clientes.bind("tcp://*:" + cfg["GESTOR_PUERTO"]);
 
-    // Socket REQ para persistencia (se conecta al 6666)
-    zmq::socket_t socketPersistencia(context, ZMQ_REQ);
-    socketPersistencia.connect("tcp://10.43.100.44:6666"); // IP de la VM de persistencia
-    std::cout << "Gestor conectado a persistencia en puerto 6666..." << std::endl;
+    // Gestor -> RMC: REQ. Canal síncrono. Como están en la misma VM, la IP suele ser 127.0.0.1.
+    zmq::socket_t rmc(contexto, zmq::socket_type::req);
+    rmc.connect(direccion(cfg["RMC_IP"], cfg["RMC_PUERTO"]));
+
+    // Gestor -> Cancelación: PUSH. Canal asíncrono: send() no espera respuesta.
+    zmq::socket_t cancelacion(contexto, zmq::socket_type::push);
+    cancelacion.connect(direccion(cfg["CANCELACION_IP"], cfg["CANCELACION_PUERTO"]));
+
+    log("Gestor", "Escuchando clientes en el puerto " + cfg["GESTOR_PUERTO"] +
+                  ", RMC en " + direccion(cfg["RMC_IP"], cfg["RMC_PUERTO"]));
+
+    // Contadores para TPM: cuántas transacciones de cada tipo se respondieron en el minuto actual.
+    std::map<std::string, int> tpm;
+    auto inicioMinuto = std::chrono::steady_clock::now();
+    std::ofstream archivoTPM("tpm.csv", std::ios::app);   // minuto,consultas,reservas
 
     while (true) {
-        // Recibir solicitud del cliente
-        zmq::message_t request;
-        auto result = socketClientes.recv(request, zmq::recv_flags::none);
-        std::string msg(static_cast<char*>(request.data()), request.size());
-        std::cout << "[Gestor] Solicitud recibida: " << msg << std::endl;
+        std::string solicitud = recibir(clientes);
+        auto p = partir(solicitud);
+        std::string tipo = p.empty() ? "" : p[0];
+        log("Gestor", "<- Cliente: " + solicitud);
+        std::string respuesta;
 
-        // Reenviar la solicitud a la persistencia
-        zmq::message_t reqPersistencia(msg.size());
-        memcpy(reqPersistencia.data(), msg.data(), msg.size());
-	std::string msgComprobacion(static_cast<char*>(reqPersistencia.data()), msg.size());
+        if (tipo == "CONSULTA" || tipo == "RESERVA" || tipo == "MODIFICACION") {
+            enviar(rmc, solicitud);          // reenviar tal cual al RMC...
+            respuesta = recibir(rmc);        // ...y esperar (bloqueado) su respuesta
+            if (respuesta.rfind("EXITO", 0) == 0) tpm[tipo]++;
+        } else if (tipo == "CANCELACION") {
+            enviar(cancelacion, solicitud);  // se encola y seguimos sin esperar
+            respuesta = "RECIBIDO cancelacion en proceso; se notificara al terminar";
+        } else {
+            respuesta = "RECHAZO tipo de solicitud desconocido";
+        }
 
-	std::cout << "[DEBUG gestor] msg original: " << msg << std::endl;
-	std::cout << "[DEBUG gestor] msg copiado:  " << msgComprobacion << std::endl;
-        socketPersistencia.send(reqPersistencia, zmq::send_flags::none);
-        // Recibir respuesta de la persistencia
-        zmq::message_t respPersistencia;
-        auto resultpersistencia = socketPersistencia.recv(respPersistencia, zmq::recv_flags::none);
-        std::string respuesta(static_cast<char*>(respPersistencia.data()), respPersistencia.size());
+        log("Gestor", "-> Cliente: " + respuesta.substr(0, respuesta.find('\n')));
+        enviar(clientes, respuesta);
 
-        // Enviar respuesta al cliente
-        zmq::message_t reply(respuesta.size());
-        memcpy(reply.data(), respuesta.data(), respuesta.size());
-        socketClientes.send(reply, zmq::send_flags::none);
+        // Cada 60 s, escribir el TPM del minuto que terminó y reiniciar los contadores.
+        auto ahora = std::chrono::steady_clock::now();
+        if (ahora - inicioMinuto >= std::chrono::minutes(1)) {
+            log("Gestor", "TPM: consultas=" + std::to_string(tpm["CONSULTA"]) +
+                          " reservas=" + std::to_string(tpm["RESERVA"]));
+            archivoTPM << hora() << "," << tpm["CONSULTA"] << "," << tpm["RESERVA"] << std::endl;
+            tpm.clear();
+            inicioMinuto = ahora;
+        }
     }
 }

@@ -1,0 +1,25 @@
+# Direcciones de cada servicio.
+# Para probar todo en un solo computador, deje todas las IP en 127.0.0.1.
+# Para la demo, ponga la IP real de cada VM (se ve con: ip a).
+
+# VM2: Gestor de Transacciones (los clientes se conectan aquí)
+GESTOR_IP=127.0.0.1
+GESTOR_PUERTO=5555
+
+# VM2: RMC (el gestor se conecta aquí; misma VM que el gestor)
+RMC_IP=127.0.0.1
+RMC_PUERTO=5556
+
+# VM2: Servicio de cancelación (el gestor le empuja las cancelaciones)
+CANCELACION_IP=127.0.0.1
+CANCELACION_PUERTO=5557
+
+# VM2: puerto donde el servicio de cancelación publica notificaciones (2ª entrega)
+NOTIFICACION_PUERTO=5558
+
+# VM3: Persistencia (el RMC y cancelación se conectan aquí)
+PERSISTENCIA_IP=127.0.0.1
+PERSISTENCIA_PUERTO=6666
+
+# Archivo de la base de datos (vive en la VM3)
+BD_ARCHIVO=reserva.db

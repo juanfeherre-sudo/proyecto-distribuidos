@@ -1,0 +1,14 @@
+# Binarios: cada VM compila con make
+cliente
+gestor
+rmc
+cancelacion
+persistencia
+# La BD se genera desde eventos.txt
+*.db
+# Métricas generadas al correr
+metricas_*.csv
+tpm.csv
+# Respaldos de editores
+*.save
+*~
