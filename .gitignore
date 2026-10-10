@@ -1,0 +1,14 @@
+# Binarios: cada VM compila con make
+cliente
+gestor
+rmc
+cancelaciones
+persistencia
+# La BD se genera desde init_db.sql
+*.db
+# Archivos que se generan al correr
+metricas_*.csv
+tpm.csv
+# Respaldos del editor
+*.save
+*~
