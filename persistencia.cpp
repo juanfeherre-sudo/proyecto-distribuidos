@@ -56,6 +56,22 @@ void imprimirEstado() {
                   << " | Libres: " << sqlite3_column_int(stmt, 2)
                   << " | Ocupados: " << sqlite3_column_int(stmt, 3) << std::endl;
     }
+    sqlite3_finalize(stmt);
+
+    // tambien la tabla de reservas
+    sqlite3_prepare_v2(db, "SELECT idReservas, idEvento, fecha, cliente, numAsientos FROM Reservas;",
+                       -1, &stmt, nullptr);
+    std::cout << "\n----- RESERVAS -----" << std::endl;
+    int n = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        std::cout << "Reserva " << sqlite3_column_int(stmt, 0)
+                  << " | Evento: " << sqlite3_column_text(stmt, 1)
+                  << " | Fecha: " << sqlite3_column_text(stmt, 2)
+                  << " | Cliente: " << sqlite3_column_text(stmt, 3)
+                  << " | Asientos: " << sqlite3_column_int(stmt, 4) << std::endl;
+        n++;
+    }
+    if (n == 0) std::cout << "(no hay reservas)" << std::endl;
     std::cout << "---------------------------\n" << std::endl;
     sqlite3_finalize(stmt);
     sqlite3_close(db);
@@ -244,11 +260,12 @@ int main(int argc, char* argv[]) {
             int numAsientos = 0;
             iss >> idEvento >> fecha >> cliente >> numAsientos;
             respuesta = reservarAsientos(idEvento, fecha, cliente, numAsientos);
+            imprimirEstado();   // se muestra la BD actualizada despues de cada reserva
         } else if (cmd == "ELIMINAR") {
             std::string idEvento, fecha, cliente;
             iss >> idEvento >> fecha >> cliente;
             respuesta = eliminarReserva(idEvento, fecha, cliente);
-            imprimirEstado();
+            imprimirEstado();   // y despues de cada cancelacion
         } else if (cmd == "ESTADO") {
             imprimirEstado();
             respuesta = "OK";
