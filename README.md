@@ -59,7 +59,7 @@ Para varios clientes simultáneos se lanzan varios procesos `./cliente`, cada un
 | Cancelación → Persistencia | `ELIMINAR <evento> <fecha> <cliente>` | asientos liberados |
 
 ## 7. Qué muestra cada consola
-- **Persistencia:** el estado completo de la BD al arrancar, cada orden y cómo queda la ocurrencia tras cada reserva (`BD -> Evento: E5 | Fecha: 2026-11-02 | Libres: 97 | Ocupados: 3`).
+- **Persistencia:** cada orden que recibe, y la BD completa (tabla de eventos y tabla de reservas) al arrancar y después de cada reserva o cancelación (`Evento: E5 | Fecha: 2026-11-02 | Libres: 97 | Ocupados: 3` y `Reserva 1 | Evento: E5 | Fecha: 2026-11-02 | Cliente: juan | Asientos: 3`).
 - **RMC:** cada solicitud, lo que le pregunta a la persistencia y el resultado (ÉXITO o RECHAZO).
 - **Gestor:** cada solicitud y respuesta; cada minuto el TPM.
 - **Cliente:** el resultado y el tiempo de respuesta de cada solicitud (también en `metricas_<archivo>.csv`).
