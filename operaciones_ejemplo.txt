@@ -1,9 +1,79 @@
 # Operaciones de prueba del cliente. Una por linea (lineas con # se ignoran).
+# 60 operaciones: a 20 por minuto dura 3 minutos (./cliente operaciones_ejemplo.txt 20)
+# Formato: CONSULTA <AAAA-MM> | RESERVA <evento> <fecha> <cliente> <asientos> | ELIMINAR <evento> <fecha> <cliente>
+
+# --- consultas ---
 CONSULTA 2026-11
+CONSULTA 2026-11
+CONSULTA 2026-12
+CONSULTA 2026-11
+
+# --- reservas normales (EXITO) ---
 RESERVA E5 2026-11-02 juan 3
 RESERVA E5 2026-11-21 ana 10
+RESERVA E1 2026-11-06 carlos 4
+RESERVA E1 2026-11-18 laura 2
+RESERVA E2 2026-11-07 sofia 5
+RESERVA E3 2026-11-01 mateo 1
+RESERVA E4 2026-11-14 valeria 6
+RESERVA E6 2026-11-10 diego 8
+RESERVA E7 2026-11-09 camila 2
+RESERVA E8 2026-11-17 andres 3
+RESERVA E9 2026-11-22 paula 7
+RESERVA E10 2026-11-02 nicolas 4
+
+CONSULTA 2026-11
+
+# --- se llena el evento E30 (98 + 2 = 100) ---
 RESERVA E30 2026-11-14 pedro 98
 RESERVA E30 2026-11-14 maria 5
+RESERVA E30 2026-11-14 ana 2
+RESERVA E30 2026-11-14 juan 1
+CONSULTA 2026-11
+
+# --- mas reservas (EXITO) ---
+RESERVA E11 2026-11-24 felipe 3
+RESERVA E12 2026-11-07 daniela 2
+RESERVA E13 2026-11-25 sebastian 5
+RESERVA E14 2026-11-19 isabella 4
+RESERVA E15 2026-11-11 julian 6
+RESERVA E16 2026-11-16 manuela 2
+RESERVA E17 2026-11-10 santiago 1
+RESERVA E18 2026-11-07 gabriela 9
+RESERVA E19 2026-11-04 david 3
+RESERVA E20 2026-11-29 natalia 2
+RESERVA E21 2026-11-03 oscar 5
+RESERVA E22 2026-11-05 lucia 4
+
+CONSULTA 2026-11
+
+# --- casos que deben dar RECHAZO ---
 RESERVA E99 2026-11-10 juan 2
 RESERVA E5 2026-11-02 juan 0
+RESERVA E5 2026-11-03 juan 2
+RESERVA E40 2026-11-09 pablo 150
+RESERVA E41 2026-11-12 pablo -3
+CONSULTA 2026-10
+BORRAR E5 2026-11-02 juan
+
+# --- cancelaciones (asincronas, responden RECIBIDO) ---
+ELIMINAR E5 2026-11-02 juan
+ELIMINAR E30 2026-11-14 pedro
+ELIMINAR E1 2026-11-06 carlos
+ELIMINAR E99 2026-11-10 nadie
+CONSULTA 2026-11
+
+# --- reservas despues de cancelar ---
+RESERVA E30 2026-11-14 maria 5
+RESERVA E5 2026-11-02 juan 3
+RESERVA E1 2026-11-06 carlos 4
+RESERVA E23 2026-11-07 fernando 2
+RESERVA E24 2026-11-03 monica 3
+RESERVA E25 2026-11-09 ricardo 2
+RESERVA E26 2026-11-02 alejandra 6
+RESERVA E27 2026-11-10 jorge 1
+RESERVA E28 2026-11-05 karen 4
+RESERVA E29 2026-11-09 luis 3
+RESERVA E31 2026-11-11 hector 2
+CONSULTA 2026-11
 CONSULTA 2026-12
