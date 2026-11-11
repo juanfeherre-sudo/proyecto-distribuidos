@@ -1,6 +1,6 @@
 // RMC (VM2): revisa disponibilidad con la persistencia y decide si la reserva se hace
 
-#include <zmq.hpp>
+#include "common.hpp"
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -48,17 +48,19 @@ std::string reservar(zmq::socket_t& socketPersistencia, const std::string& idEve
 }
 
 int main() {
+    auto cfg = leerConfig();
     zmq::context_t context(1);
 
     // Socket REP para el gestor
     zmq::socket_t socketGestor(context, ZMQ_REP);
-    socketGestor.bind("tcp://*:5556");
+    socketGestor.connect(direccion(cfg["GESTOR_IP"], cfg["RMC_BACKEND_PUERTO"]));
+    socketGestor.connect(direccion(cfg["GESTOR_IP"], cfg["RMC_BACKEND2_PUERTO"]));
 
     // Socket REQ para la persistencia (VM3)
     zmq::socket_t socketPersistencia(context, ZMQ_REQ);
-    socketPersistencia.connect("tcp://10.43.99.231:6666"); // IP de la VM de persistencia
+    socketPersistencia.connect(direccion(cfg["PERSISTENCIA_IP"], cfg["PERSISTENCIA_PUERTO"]));
 
-    std::cout << "RMC escuchando en puerto 5556, conectado a persistencia..." << std::endl;
+    std::cout << "RMC escuchando en puerto " << cfg["RMC_BACKEND_PUERTO"] << ", conectado a persistencia..." << std::endl;
 
     while (true) {
         zmq::message_t request;

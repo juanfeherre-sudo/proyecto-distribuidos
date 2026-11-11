@@ -7,6 +7,7 @@
 #include <fstream>
 #include <string>
 #include <sqlite3.h>
+#include "common.hpp"
 
 const char* BD = "reserva.db";
 
@@ -224,6 +225,7 @@ std::string eliminarReserva(const std::string& idEvento, const std::string& fech
 }
 
 int main(int argc, char* argv[]) {
+    auto cfg = leerConfig();
 
     // si le pasan un .sql lo carga, si la BD esta vacia carga init_db.sql
     if (argc > 1) cargarBD(argv[1]);
@@ -232,9 +234,9 @@ int main(int argc, char* argv[]) {
 
     zmq::context_t context(1);
     zmq::socket_t socket(context, ZMQ_REP);
-    socket.bind("tcp://*:6666");
+    socket.bind("tcp://*:" + cfg["PERSISTENCIA_PUERTO"]);
 
-    std::cout << "Persistencia escuchando en puerto 6666..." << std::endl;
+    std::cout << "Persistencia escuchando en puerto " << cfg["PERSISTENCIA_PUERTO"] << "..." << std::endl;
 
     while (true) {
         zmq::message_t request;

@@ -3,7 +3,7 @@
 // ./cliente archivo.txt 20     -> manda las operaciones del archivo, 20 por minuto
 // formato del archivo: CONSULTA 2026-11 / RESERVA E5 2026-11-02 juan 3 / ELIMINAR E5 2026-11-02 juan
 
-#include <zmq.hpp>
+#include "common.hpp"
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -59,9 +59,10 @@ void modoArchivo(zmq::socket_t& socket, const std::string& ruta, int porMinuto) 
 }
 
 int main(int argc, char* argv[]) {
+    auto cfg = leerConfig();
     zmq::context_t context(1);
     zmq::socket_t socket(context, ZMQ_REQ);
-    socket.connect("tcp://10.43.100.44:5555");
+    socket.connect(direccion(cfg["GESTOR_IP"], cfg["GESTOR_PUERTO"]));
     
     if (argc > 1) {
         int porMinuto = 20;
