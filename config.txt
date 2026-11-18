@@ -1,9 +1,11 @@
 # Direcciones de cada servicio. El MISMO archivo va en las 3 VMs.
-# Para probar todo en un solo computador, deje las IP en 127.0.0.1.
-# Para la demo, ponga la IP real de cada VM (se ve con: hostname -I).
+# Las IP son las reales de cada VM (se ven con: hostname -I).
+#   VM2 (gestor, RMC, cancelaciones): GESTOR_IP y CANCELACION_IP
+#   VM3 (persistencia):               PERSISTENCIA_IP
+# Para probar todo en un solo computador, ponga las tres en 127.0.0.1.
 
 # --- VM2: lógica de negocio -------------------------------------------------
-GESTOR_IP=127.0.0.1
+GESTOR_IP=10.43.100.44
 
 # Puertos donde cada gestor atiende a los clientes.
 # Se levantan los dos: si matan el principal, el cliente se pasa al de respaldo.
@@ -17,12 +19,12 @@ RMC_BACKEND_PUERTO=5556
 RMC_BACKEND2_PUERTO=5566
 
 # Servicio de cancelación (misma VM que el gestor)
-CANCELACION_IP=127.0.0.1
+CANCELACION_IP=10.43.100.44
 CANCELACION_PUERTO=5557
 NOTIFICACION_PUERTO=5558
 
 # --- VM3: almacenamiento ----------------------------------------------------
-PERSISTENCIA_IP=127.0.0.1
+PERSISTENCIA_IP=10.43.99.231
 
 # Principal: atiende escrituras y disponibilidad en tiempo real.
 PERSISTENCIA_PUERTO=6666

@@ -51,7 +51,8 @@ int main() {
     auto cfg = leerConfig();
     zmq::context_t context(1);
 
-    // Socket REP para el gestor
+    // Socket REP hacia los gestores. El RMC hace CONNECT a los dos (principal y respaldo),
+    // por eso se pueden levantar varios RMC a la vez: ./rmc 1, ./rmc 2, ./rmc 3
     zmq::socket_t socketGestor(context, ZMQ_REP);
     socketGestor.connect(direccion(cfg["GESTOR_IP"], cfg["RMC_BACKEND_PUERTO"]));
     socketGestor.connect(direccion(cfg["GESTOR_IP"], cfg["RMC_BACKEND2_PUERTO"]));
@@ -60,7 +61,9 @@ int main() {
     zmq::socket_t socketPersistencia(context, ZMQ_REQ);
     socketPersistencia.connect(direccion(cfg["PERSISTENCIA_IP"], cfg["PERSISTENCIA_PUERTO"]));
 
-    std::cout << "RMC escuchando en puerto " << cfg["RMC_BACKEND_PUERTO"] << ", conectado a persistencia..." << std::endl;
+    std::cout << "RMC conectado a los gestores (" << cfg["RMC_BACKEND_PUERTO"] << " y "
+              << cfg["RMC_BACKEND2_PUERTO"] << ") y a persistencia en "
+              << cfg["PERSISTENCIA_IP"] << ":" << cfg["PERSISTENCIA_PUERTO"] << std::endl;
 
     while (true) {
         zmq::message_t request;
