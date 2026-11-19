@@ -12,6 +12,7 @@ int main() {
 
     // Socket PULL, recibe lo que manda el gestor
     zmq::socket_t socketGestor(context, ZMQ_PULL);
+    socketGestor.set(zmq::sockopt::rcvtimeo, PULSO_MS);   // despertar cada segundo para el watchdog
     socketGestor.bind("tcp://*:" + cfg["CANCELACION_PUERTO"]);
 
     // REQ hacia la persistencia, con tiempo de espera y reintento (Lazy Pirate).
@@ -25,9 +26,12 @@ int main() {
               << ", conectado a persistencia en " << cfg["PERSISTENCIA_IP"] << ":"
               << cfg["PERSISTENCIA_PUERTO"] << std::endl;
 
+    avisarListo();   // a systemd: ya hice el bind, estoy listo
+
     while (true) {
+        avisarVivo();   // watchdog: cada vuelta, al menos una por segundo, systemd sabe que sigue bien
         zmq::message_t request;
-        auto res = socketGestor.recv(request, zmq::recv_flags::none);
+        if (!socketGestor.recv(request, zmq::recv_flags::none)) continue;   // no llego nada en 1 s
         std::string msg(static_cast<char*>(request.data()), request.size());   // ej: "ELIMINAR E5 2026-11-02 juan"
         std::cout << "[Cancelacion] Recibido: " << msg << std::endl;
 
