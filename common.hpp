@@ -113,27 +113,34 @@ inline void log(const std::string& quien, const std::string& texto) {
 // de estados quedó a medias), así que se bota, se abre otro contra la siguiente
 // dirección de la lista y se reenvía el MISMO mensaje.
 //
-// Es el patrón "Lazy Pirate" de la guía de ZeroMQ. Reenviar es seguro porque
-// cada solicitud lleva su idSol y la persistencia no la aplica dos veces.
+// Es el patrón "Lazy Pirate" de la guía de ZeroMQ.
+// OJO: reenviar una escritura (una reserva) puede duplicarla si la primera sí
+// se aplicó y lo que se perdió fue la respuesta. Por eso pedir() deja indicar
+// cuántos intentos se hacen: las lecturas se reintentan, las escrituras no,
+// hasta que el protocolo tenga un id único por solicitud.
 // ---------------------------------------------------------------------------
 class ReqConReintento {
 public:
     ReqConReintento(zmq::context_t& contexto, const std::vector<std::string>& direcciones,
-                    int esperaMs, int intentos)
+                    int esperaMs, int intentos, const std::string& quien)
         : contexto_(contexto), direcciones_(direcciones), esperaMs_(esperaMs),
-          intentos_(intentos), socket_(contexto, zmq::socket_type::req) {
+          intentos_(intentos), quien_(quien), socket_(contexto, zmq::socket_type::req) {
         abrir();
     }
 
     // Devuelve la respuesta. Si se agotaron los intentos devuelve "nada" (optional vacío),
     // que NO es lo mismo que una respuesta vacía: una consulta sin resultados responde "".
-    std::optional<std::string> pedir(const std::string& mensaje) {
-        for (int intento = 0; intento < intentos_; intento++) {
+    // 'intentos' en 0 usa los del constructor; 1 = no reenviar.
+    std::optional<std::string> pedir(const std::string& mensaje, int intentos = 0) {
+        int maximo = intentos > 0 ? intentos : intentos_;
+        for (int intento = 1; intento <= maximo; intento++) {
             enviar(socket_, mensaje);
             zmq::message_t respuesta;
             if (socket_.recv(respuesta, zmq::recv_flags::none)) return respuesta.to_string();
 
-            // No contestó a tiempo: botar el socket y probar la siguiente réplica.
+            // No contestó a tiempo: botar el socket y probar la siguiente dirección.
+            log(quien_, direcciones_[actual_] + " no respondio en " + std::to_string(esperaMs_) +
+                        " ms (intento " + std::to_string(intento) + " de " + std::to_string(maximo) + ")");
             actual_ = (actual_ + 1) % direcciones_.size();
             abrir();
         }
@@ -154,6 +161,7 @@ private:
     std::vector<std::string> direcciones_;
     int esperaMs_;
     int intentos_;
+    std::string quien_;
     size_t actual_ = 0;
     zmq::socket_t socket_;
 };

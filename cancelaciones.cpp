@@ -14,9 +14,12 @@ int main() {
     zmq::socket_t socketGestor(context, ZMQ_PULL);
     socketGestor.bind("tcp://*:" + cfg["CANCELACION_PUERTO"]);
 
-    // Socket REQ para la persistencia
-    zmq::socket_t socketPersistencia(context, ZMQ_REQ);
-    socketPersistencia.connect(direccion(cfg["PERSISTENCIA_IP"], cfg["PERSISTENCIA_PUERTO"]));
+    // REQ hacia la persistencia, con tiempo de espera y reintento (Lazy Pirate).
+    // Reintentar ELIMINAR es seguro: si ya se aplico, la segunda vez no encuentra
+    // la reserva y no libera nada mas.
+    ReqConReintento persistencia(context,
+        {direccion(cfg["PERSISTENCIA_IP"], cfg["PERSISTENCIA_PUERTO"])},
+        std::stoi(cfg["ESPERA_PERSISTENCIA_MS"]), std::stoi(cfg["INTENTOS_PERSISTENCIA"]), "Cancelacion");
 
     std::cout << "Cancelaciones escuchando en puerto " << cfg["CANCELACION_PUERTO"]
               << ", conectado a persistencia en " << cfg["PERSISTENCIA_IP"] << ":"
@@ -28,10 +31,8 @@ int main() {
         std::string msg(static_cast<char*>(request.data()), request.size());   // ej: "ELIMINAR E5 2026-11-02 juan"
         std::cout << "[Cancelacion] Recibido: " << msg << std::endl;
 
-        socketPersistencia.send(zmq::buffer(msg), zmq::send_flags::none);
-        zmq::message_t resp;
-        auto res2 = socketPersistencia.recv(resp, zmq::recv_flags::none);
-        std::string respuesta(static_cast<char*>(resp.data()), resp.size());
+        auto resp = persistencia.pedir(msg);
+        std::string respuesta = resp ? *resp : "la persistencia no responde, la cancelacion no se aplico";
 
         std::cout << "[Cancelacion] Resultado: " << respuesta
                   << "  (notificacion al cliente: 2a entrega)" << std::endl;

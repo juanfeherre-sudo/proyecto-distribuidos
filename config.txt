@@ -37,7 +37,17 @@ BD_REPLICA=reserva_replica.db
 # Canal por el que el principal le copia cada cambio a la réplica.
 REPLICA_SYNC_PUERTO=6668
 
-# --- Tiempos de espera ------------------------------------------------------
-# Si un servicio no responde en ESPERA_MS, se reenvía la solicitud (hasta INTENTOS veces).
-ESPERA_MS=2500
-INTENTOS=3
+# --- Tiempos de espera (Lazy Pirate) ----------------------------------------
+# Si un servicio no responde en ESPERA_*_MS, se bota el socket, se abre otro y se
+# reenvía la solicitud, hasta INTENTOS_* veces.
+# Regla: cada capa espera MÁS de lo que tarda en rendirse la capa de abajo. Si no,
+# la de arriba reintenta mientras la de abajo todavía está esperando.
+#   RMC -> persistencia:  500 ms x 2      -> a lo sumo 1,5 s por solicitud (reserva)
+#   gestor -> RMC:       2000 ms x 2      -> a lo sumo 4 s
+#   cliente -> gestor:   5000 ms x 3      (gestor 1 -> gestor 2 -> gestor 1)
+ESPERA_PERSISTENCIA_MS=500
+INTENTOS_PERSISTENCIA=2
+ESPERA_RMC_MS=2000
+INTENTOS_RMC=2
+ESPERA_GESTOR_MS=5000
+INTENTOS_GESTOR=3

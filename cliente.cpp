@@ -1,34 +1,44 @@
 // Cliente (VM1)
-// ./cliente                    -> menu
+// ./cliente                    -> se escribe cada solicitud en una linea, ej: RESERVA E5 2026-11-02 juan 3
 // ./cliente archivo.txt 20     -> manda las operaciones del archivo, 20 por minuto
-// formato del archivo: CONSULTA 2026-11 / RESERVA E5 2026-11-02 juan 3 / ELIMINAR E5 2026-11-02 juan
+// formato (igual en los dos modos): CONSULTA 2026-11 / RESERVA E5 2026-11-02 juan 3 / ELIMINAR E5 2026-11-02 juan
 
 #include "common.hpp"
+#include <cctype>
 #include <iostream>
 #include <fstream>
 #include <string>
 #include <chrono>
 #include <thread>
 
-// manda una solicitud al gestor, espera la respuesta y mide cuanto se demoro (ms)
-std::string enviarSolicitud(zmq::socket_t& socket, const std::string& solicitud, double& ms) {
+// manda una solicitud al gestor, espera la respuesta y mide cuanto se demoro (ms).
+// Si el gestor no responde a tiempo, ReqConReintento reenvia la misma solicitud al
+// otro gestor (Lazy Pirate). El tiempo medido incluye esos reintentos.
+std::string enviarSolicitud(ReqConReintento& gestor, const std::string& solicitud, double& ms) {
     auto inicio = std::chrono::steady_clock::now();
-
-    zmq::message_t request(solicitud.size());
-    memcpy(request.data(), solicitud.c_str(), solicitud.size());
-    zmq::send_result_t sent = socket.send(request, zmq::send_flags::none);
-
-    zmq::message_t reply;
-    zmq::recv_result_t result = socket.recv(reply, zmq::recv_flags::none);
-    std::string respuesta(static_cast<char*>(reply.data()), reply.size());
-
+    auto respuesta = gestor.pedir(solicitud);
     auto fin = std::chrono::steady_clock::now();
     ms = std::chrono::duration<double, std::milli>(fin - inicio).count();
-    return respuesta;
+
+    if (!respuesta) return "SIN_RESPUESTA: ningun gestor respondio";
+    return *respuesta;
+}
+
+// revisa que la linea sea una solicitud conocida con el numero de datos correcto,
+// para avisar del error de una vez sin mandarla al gestor
+bool formatoValido(const std::string& linea) {
+    std::istringstream iss(linea);
+    std::string tipo, dato;
+    iss >> tipo;
+    int datos = 0;
+    while (iss >> dato) datos++;
+    return (tipo == "CONSULTA" && datos == 1) ||
+           (tipo == "RESERVA"  && datos == 4) ||
+           (tipo == "ELIMINAR" && datos == 3);
 }
 
 // lee las operaciones de un archivo y las manda una por una (porMinuto = solicitudes por minuto)
-void modoArchivo(zmq::socket_t& socket, const std::string& ruta, int porMinuto) {
+void modoArchivo(ReqConReintento& gestor, const std::string& ruta, int porMinuto) {
     std::ifstream archivo(ruta);
     if (!archivo) {
         std::cout << "No se encontro " << ruta << std::endl;
@@ -43,11 +53,12 @@ void modoArchivo(zmq::socket_t& socket, const std::string& ruta, int porMinuto) 
         if (linea.empty() || linea[0] == '#') continue;
 
         double ms;
-        std::string respuesta = enviarSolicitud(socket, linea, ms);
+        std::string respuesta = enviarSolicitud(gestor, linea, ms);
         std::string operacion = linea.substr(0, linea.find(' '));
         std::string resultado = "RECHAZO";
         if (respuesta.substr(0, 5) == "EXITO") resultado = "EXITO";
         if (respuesta.substr(0, 8) == "RECIBIDO") resultado = "RECIBIDO";
+        if (respuesta.substr(0, 13) == "SIN_RESPUESTA") resultado = "SIN_RESPUESTA";
 
         std::cout << linea << "  =>  " << respuesta.substr(0, respuesta.find('\n'))
                   << "  (" << (int)ms << " ms)" << std::endl;
@@ -61,63 +72,46 @@ void modoArchivo(zmq::socket_t& socket, const std::string& ruta, int porMinuto) 
 int main(int argc, char* argv[]) {
     auto cfg = leerConfig();
     zmq::context_t context(1);
-    zmq::socket_t socket(context, ZMQ_REQ);
-    socket.connect(direccion(cfg["GESTOR_IP"], cfg["GESTOR_PUERTO"]));
-    
+
+    // Los dos gestores: se empieza por el principal y, si no responde, se pasa al respaldo
+    ReqConReintento gestor(context,
+        {direccion(cfg["GESTOR_IP"], cfg["GESTOR_PUERTO"]),
+         direccion(cfg["GESTOR_IP"], cfg["GESTOR2_PUERTO"])},
+        std::stoi(cfg["ESPERA_GESTOR_MS"]), std::stoi(cfg["INTENTOS_GESTOR"]), "Cliente");
+
     if (argc > 1) {
         int porMinuto = 20;
         if (argc > 2) porMinuto = std::stoi(argv[2]);
-        modoArchivo(socket, argv[1], porMinuto);
+        modoArchivo(gestor, argv[1], porMinuto);
         return 0;
     }
 
-    while (true){
-    	//seleccion cliente
-    	std::string accion;
-    	std::cout<<"seleccione la accion a realizar :"<<std::endl;
-    	std::cout<<"1. Consulta"<<std::endl;
-    	std::cout<<"2. Reserva"<<std::endl;
-    	std::cout<<"3. Eliminar"<<std::endl;
-    	std::cout<<"0. Salir"<<std::endl;
-    	std::cin>>accion;
-    	std::string solicitud;
+    // modo interactivo: cada solicitud se escribe completa en una sola linea,
+    // con el mismo formato del archivo de operaciones (sin menu)
+    std::cout << "Escriba una solicitud por linea (SALIR para terminar):\n"
+              << "  CONSULTA <AAAA-MM>\n"
+              << "  RESERVA <evento> <AAAA-MM-DD> <cliente> <asientos>\n"
+              << "  ELIMINAR <evento> <AAAA-MM-DD> <cliente>\n";
 
-    	if (accion == "Consulta" || accion == "1"){
-    		std::string mes;
-    		std::cout<<"Ingrese el mes (AAAA-MM, ej. 2026-11) "<<std::endl;
-    		std::cin>>mes;
-    		solicitud = "CONSULTA " + mes;
-   	}else if (accion == "Reserva" || accion == "2"){
-    		std::string idEvento, fecha, cliente;
-		int numAsientos;
-		std::cout<<"Ingrese ID del evento (ej. E5) "<<std::endl;
-		std::cin>>idEvento;
-		std::cout<<"Ingrese la fecha (AAAA-MM-DD) "<<std::endl;
-		std::cin>>fecha;
-		std::cout<<"Ingrese nombre del cliente "<<std::endl;
-		std::cin>> cliente;
-		std::cout<<"ingrese numero de asientos "<<std::endl;
-		std::cin>>numAsientos;
-		solicitud = "RESERVA " + idEvento + " " + fecha + " " + cliente + " " + std::to_string(numAsientos);
-	} else if (accion == "eliminar" || accion == "3") {
-        	std::string idEvento, fecha, cliente;
-        	std::cout << "Ingrese ID del evento a cancelar: ";
-        	std::cin >> idEvento;
-        	std::cout << "Ingrese la fecha (AAAA-MM-DD): ";
-        	std::cin >> fecha;
-        	std::cout << "Ingrese nombre del cliente: ";
-        	std::cin >> cliente;
-        	solicitud = "ELIMINAR " + idEvento + " " + fecha + " " + cliente;
-	} else if (accion == "0") {
-		break;
-	}else{
-		std::cout<<"accion no reconocida "<<std::endl;
-		continue;
-    	}
+    std::string linea;
+    while (std::cout << "> " && std::getline(std::cin, linea)) {
+        // la primera palabra se pasa a mayusculas: "consulta 2026-11" tambien sirve
+        for (size_t i = 0; i < linea.size() && linea[i] != ' '; i++)
+            linea[i] = std::toupper(static_cast<unsigned char>(linea[i]));
 
-    	double ms;
-    	std::string respuesta = enviarSolicitud(socket, solicitud, ms);
-    	std::cout << "Respuesta: " << respuesta << "\n(" << (int)ms << " ms)" << std::endl;
+        if (linea.empty()) continue;
+        if (linea == "SALIR") break;
+        if (!formatoValido(linea)) {
+            std::cout << "Formato no valido. Ejemplos:\n"
+                      << "  CONSULTA 2026-11\n"
+                      << "  RESERVA E1 2026-11-18 laura 2\n"
+                      << "  ELIMINAR E1 2026-11-18 laura" << std::endl;
+            continue;
+        }
+
+        double ms;
+        std::string respuesta = enviarSolicitud(gestor, linea, ms);
+        std::cout << respuesta << "\n(" << (int)ms << " ms)" << std::endl;
     }
     return 0;
 }

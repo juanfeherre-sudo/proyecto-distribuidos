@@ -22,8 +22,21 @@ int main(int argc, char* argv[]) {
     // Socket REQ para los RMC (sincrono). El gestor hace BIND y los RMC hacen connect:
     // asi se pueden levantar varios RMC sin que choquen por el puerto, y el REQ
     // les reparte las solicitudes por turnos.
+    //
+    // Lazy Pirate hacia los RMC: si un RMC no responde en ESPERA_RMC_MS, se reenvia la
+    // misma solicitud y el REQ, que reparte por turnos, se la entrega a otro RMC.
+    // Como este socket hace bind no se puede botar y reabrir (chocaria con su propio
+    // puerto), asi que se usan dos opciones de ZeroMQ:
+    //   req_relaxed:   deja volver a enviar aunque no haya llegado la respuesta anterior
+    //   req_correlate: si la respuesta vieja llega tarde, se descarta en vez de confundirla
     std::string puertoRMC = esRespaldo ? cfg["RMC_BACKEND2_PUERTO"] : cfg["RMC_BACKEND_PUERTO"];
+    int esperaRMC = std::stoi(cfg["ESPERA_RMC_MS"]);
+    int intentosRMC = std::stoi(cfg["INTENTOS_RMC"]);
     zmq::socket_t socketRMC(context, ZMQ_REQ);
+    socketRMC.set(zmq::sockopt::rcvtimeo, esperaRMC);   // no esperar la respuesta para siempre
+    socketRMC.set(zmq::sockopt::sndtimeo, esperaRMC);   // ni quedarse trabado si no hay ningun RMC
+    socketRMC.set(zmq::sockopt::req_relaxed, 1);
+    socketRMC.set(zmq::sockopt::req_correlate, 1);
     socketRMC.bind("tcp://*:" + puertoRMC);
     std::cout << "Gestor esperando RMC en puerto " << puertoRMC << "..." << std::endl;
 
@@ -49,11 +62,18 @@ int main(int argc, char* argv[]) {
         std::string respuesta;
 
         if (tipo == "CONSULTA" || tipo == "RESERVA" || tipo == "MODIFICACION") {
-            // se manda al RMC y se espera la respuesta
-            socketRMC.send(zmq::buffer(msg), zmq::send_flags::none);
-            zmq::message_t respRMC;
-            auto resultRMC = socketRMC.recv(respRMC, zmq::recv_flags::none);
-            respuesta = std::string(static_cast<char*>(respRMC.data()), respRMC.size());
+            // se manda a un RMC y se espera la respuesta; si no llega, se reenvia a otro
+            for (int intento = 1; intento <= intentosRMC && respuesta.empty(); intento++) {
+                zmq::message_t respRMC;
+                if (socketRMC.send(zmq::buffer(msg), zmq::send_flags::none) &&
+                    socketRMC.recv(respRMC, zmq::recv_flags::none)) {
+                    respuesta = respRMC.to_string();
+                } else {
+                    std::cout << "[Gestor] Ningun RMC respondio en " << esperaRMC << " ms (intento "
+                              << intento << " de " << intentosRMC << ")" << std::endl;
+                }
+            }
+            if (respuesta.empty()) respuesta = "RECHAZO: ningun RMC respondio";
 
             if (respuesta.substr(0, 5) == "EXITO") {
                 if (tipo == "CONSULTA") consultasMinuto++;
