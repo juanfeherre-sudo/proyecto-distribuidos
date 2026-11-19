@@ -234,13 +234,17 @@ int main(int argc, char* argv[]) {
 
     zmq::context_t context(1);
     zmq::socket_t socket(context, ZMQ_REP);
+    socket.set(zmq::sockopt::rcvtimeo, PULSO_MS);   // despertar cada segundo para el watchdog
     socket.bind("tcp://*:" + cfg["PERSISTENCIA_PUERTO"]);
 
     std::cout << "Persistencia escuchando en puerto " << cfg["PERSISTENCIA_PUERTO"] << "..." << std::endl;
 
+    avisarListo();   // a systemd: la BD esta cargada y ya hice el bind
+
     while (true) {
+        avisarVivo();   // watchdog: cada vuelta, al menos una por segundo, systemd sabe que sigue bien
         zmq::message_t request;
-        auto result = socket.recv(request, zmq::recv_flags::none);
+        if (!socket.recv(request, zmq::recv_flags::none)) continue;   // no llego nada en 1 s
         std::string msg(static_cast<char*>(request.data()), request.size());
         std::cout << "[Persistencia] Mensaje recibido: " << msg << std::endl;
 

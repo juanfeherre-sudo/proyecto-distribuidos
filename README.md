@@ -82,7 +82,27 @@ Ningún REQ espera para siempre: si no llega la respuesta a tiempo, se reenvía 
 Las lecturas (`CONSULTA`, `DISPONIBLES`) se reintentan; `RESERVAR` se manda una sola vez desde el RMC.
 **Limitación conocida:** si un RMC se congela (no muere) con una reserva en cola, el gestor la reenvía a otro RMC y, cuando el congelado despierta, también la aplica: la reserva queda duplicada. Se corrige con un id único por solicitud que la persistencia no aplique dos veces.
 
-## 9. Qué muestra cada consola
+## 9. Supervisor: systemd relanza los procesos (Watchdog)
+Lazy Pirate aguanta la caída; **systemd** vuelve a arrancar el proceso. Cada programa es un servicio con `Restart=always` (si muere, se relanza en 1 s) y `WatchdogSec` (si se traba y deja de avisar `WATCHDOG=1` durante 5 s, o 10 s el gestor, systemd lo mata y lo relanza). Corridos a mano en una terminal, los programas funcionan igual que antes.
+
+```bash
+make
+sudo ./servicios/instalar.sh vm2      # en la VM2: gestor@1, gestor@2, rmc@1..3, cancelaciones
+sudo ./servicios/instalar.sh vm3      # en la VM3: persistencia
+sudo ./servicios/instalar.sh quitar   # volver a correr todo a mano
+```
+
+| Para... | Comando |
+|---|---|
+| ver si están vivos y su PID | `systemctl status 'srb-*'` |
+| ver los mensajes de uno en vivo | `journalctl -fu srb-gestor@1` |
+| matar uno (prueba) | `sudo kill <PID>` o `sudo kill -9 <PID>`: a 1 s aparece con otro PID |
+| trabar uno (prueba del watchdog) | `sudo kill -STOP <PID>`: a los 5 s systemd lo mata y lo relanza |
+| detenerlo de verdad | `sudo systemctl stop srb-rmc@2` (con `stop` no se relanza) |
+
+Mientras los servicios estén activos no se corren los programas a mano en esa VM: chocarían por los puertos. Si se cambia `config.txt` o se recompila, `sudo systemctl restart 'srb-*'`.
+
+## 10. Qué muestra cada consola
 - **Persistencia:** cada orden que recibe, y la BD completa (tabla de eventos y tabla de reservas) al arrancar y después de cada reserva o cancelación (`Evento: E5 | Fecha: 2026-11-02 | Libres: 97 | Ocupados: 3` y `Reserva 1 | Evento: E5 | Fecha: 2026-11-02 | Cliente: juan | Asientos: 3`).
 - **RMC:** cada solicitud, lo que le pregunta a la persistencia y el resultado (ÉXITO o RECHAZO).
 - **Gestor:** cada solicitud y respuesta; cada minuto el TPM.

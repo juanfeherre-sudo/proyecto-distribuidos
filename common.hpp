@@ -5,6 +5,12 @@
 #define COMMON_HPP
 
 #include <zmq.hpp>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <cstddef>
+#include <cstdlib>
+#include <cstring>
 #include <chrono>
 #include <ctime>
 #include <fstream>
@@ -37,6 +43,41 @@ inline std::map<std::string, std::string> leerConfig(const std::string& ruta = "
     }
     return cfg;
 }
+
+// ---------------------------------------------------------------------------
+// Aviso a systemd (patrón Supervisor / Watchdog).
+// Cuando el programa corre como servicio de systemd (Type=notify), systemd le
+// pasa en la variable NOTIFY_SOCKET un socket por donde espera dos mensajes:
+//   READY=1     una vez, cuando el programa ya hizo sus bind y está listo
+//   WATCHDOG=1  seguido; si deja de llegar durante WatchdogSec, systemd da el
+//               proceso por trabado, lo mata y lo vuelve a arrancar
+// Si el programa se corre a mano en una terminal, NOTIFY_SOCKET no existe y
+// estas funciones no hacen nada.
+// ---------------------------------------------------------------------------
+inline void avisarSystemd(const char* mensaje) {
+    const char* ruta = std::getenv("NOTIFY_SOCKET");
+    if (!ruta || (ruta[0] != '/' && ruta[0] != '@')) return;
+
+    sockaddr_un dir{};
+    dir.sun_family = AF_UNIX;
+    size_t largo = std::strlen(ruta);
+    if (largo >= sizeof(dir.sun_path)) return;
+    std::memcpy(dir.sun_path, ruta, largo);
+    if (dir.sun_path[0] == '@') dir.sun_path[0] = '\0';   // socket "abstracto" de Linux
+
+    int fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return;
+    sendto(fd, mensaje, std::strlen(mensaje), 0,
+           reinterpret_cast<sockaddr*>(&dir), offsetof(sockaddr_un, sun_path) + largo);
+    close(fd);
+}
+inline void avisarListo() { avisarSystemd("READY=1"); }
+inline void avisarVivo()  { avisarSystemd("WATCHDOG=1"); }
+
+// Los sockets que esperan solicitudes despiertan al menos cada PULSO_MS aunque no
+// llegue nada, para poder mandar WATCHDOG=1. Sin esto, un proceso sano pero sin
+// trabajo se quedaría callado en el recv y systemd lo mataría.
+const int PULSO_MS = 1000;
 
 // Arma una dirección de ZeroMQ: direccion("10.0.0.5", "6666") -> "tcp://10.0.0.5:6666"
 inline std::string direccion(const std::string& ip, const std::string& puerto) {

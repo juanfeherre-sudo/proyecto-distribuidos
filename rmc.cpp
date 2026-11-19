@@ -72,9 +72,13 @@ int main() {
               << cfg["RMC_BACKEND2_PUERTO"] << ") y a persistencia en "
               << cfg["PERSISTENCIA_IP"] << ":" << cfg["PERSISTENCIA_PUERTO"] << std::endl;
 
+    socketGestor.set(zmq::sockopt::rcvtimeo, PULSO_MS);   // despertar cada segundo para el watchdog
+    avisarListo();   // a systemd: ya estoy conectado y listo
+
     while (true) {
+        avisarVivo();   // watchdog: cada vuelta, al menos una por segundo, systemd sabe que sigue bien
         zmq::message_t request;
-        auto res = socketGestor.recv(request, zmq::recv_flags::none);
+        if (!socketGestor.recv(request, zmq::recv_flags::none)) continue;   // no llego nada en 1 s
         std::string msg(static_cast<char*>(request.data()), request.size());
         std::cout << "[RMC] Recibido: " << msg << std::endl;
 

@@ -16,6 +16,7 @@ int main(int argc, char* argv[]) {
 
     // Socket REP para clientes
     zmq::socket_t socketClientes(context, ZMQ_REP);
+    socketClientes.set(zmq::sockopt::rcvtimeo, PULSO_MS);   // despertar cada segundo para el watchdog
     socketClientes.bind("tcp://*:" + puertoClientes);
     std::cout << "Gestor escuchando clientes en puerto " << puertoClientes << "..." << std::endl;
 
@@ -49,10 +50,14 @@ int main(int argc, char* argv[]) {
     int reservasMinuto = 0;
     time_t inicioMinuto = time(nullptr);
 
+    avisarListo();   // a systemd: ya hice los bind, estoy listo
+
     while (true) {
-        // Recibir solicitud del cliente
+        avisarVivo();   // watchdog: cada vuelta, al menos una por segundo, systemd sabe que sigue bien
+
+        // Recibir solicitud del cliente (si no llega nada en PULSO_MS, se vuelve a esperar)
         zmq::message_t request;
-        auto result = socketClientes.recv(request, zmq::recv_flags::none);
+        if (!socketClientes.recv(request, zmq::recv_flags::none)) continue;
         std::string msg(static_cast<char*>(request.data()), request.size());
         std::cout << "[Gestor] Solicitud recibida: " << msg << std::endl;
 

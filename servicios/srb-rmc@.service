@@ -1,0 +1,25 @@
+# Servicio de systemd del SRB (patron Supervisor / Watchdog).
+# No se copia a mano: lo instala servicios/instalar.sh, que cambia @DIR@ y @USUARIO@.
+[Unit]
+Description=SRB - RMC %i
+After=network-online.target
+Wants=network-online.target
+# 0 = relanzar siempre. Sin esto, si muere 5 veces en 10 s systemd deja de relanzarlo.
+StartLimitIntervalSec=0
+
+[Service]
+# notify: el programa avisa READY=1 cuando esta listo y WATCHDOG=1 cada segundo
+Type=notify
+NotifyAccess=main
+User=@USUARIO@
+# el programa lee config.txt de la carpeta donde arranca
+WorkingDirectory=@DIR@
+ExecStart=@DIR@/rmc %i
+# si el proceso termina por cualquier motivo, se vuelve a arrancar a 1 s
+Restart=always
+RestartSec=1
+# si en 5 s no llega WATCHDOG=1, lo da por trabado: lo mata y lo relanza
+WatchdogSec=5
+
+[Install]
+WantedBy=multi-user.target
