@@ -44,7 +44,7 @@ Si hay firewall: `sudo ufw allow 5555:5557/tcp` y `sudo ufw allow 5565:5566/tcp`
 ./rmc 3                        # se pueden levantar los que se quieran
 ./cancelaciones
 # VM1
-./cliente                               # menú: consulta, reserva, eliminar
+./cliente                               # una solicitud por línea: RESERVA E1 2026-11-18 laura 2
 ./cliente operaciones_ejemplo.txt 20    # operaciones desde archivo, 20 por minuto
 ```
 Para varios clientes simultáneos se lanzan varios procesos `./cliente`, cada uno con su archivo.
@@ -69,7 +69,20 @@ pgrep -a rmc                                    # un proceso por cada RMC
 ```
 Los RMC no aparecen en `ss` porque no escuchan: se conectan a los gestores.
 
-## 8. Qué muestra cada consola
+## 8. Tolerancia a fallas (Lazy Pirate)
+Ningún REQ espera para siempre: si no llega la respuesta a tiempo, se reenvía la solicitud (tiempos e intentos en `config.txt`).
+
+| Si se cae... | Qué pasa | Cuando vuelve |
+|---|---|---|
+| el gestor principal | el cliente espera 5 s y reenvía la misma solicitud al gestor 2 | los clientes nuevos vuelven a usarlo; los que ya cambiaron siguen en el 2 |
+| un RMC | el gestor espera 2 s y reenvía la solicitud, que le llega a otro RMC | se conecta solo a los gestores y vuelve a recibir trabajo |
+| la persistencia | el RMC responde `RECHAZO: la persistencia no responde` en 1 s, sin colgarse | todo sigue funcionando sin reiniciar nada más |
+| cancelaciones | el gestor deja las cancelaciones en cola (PUSH) | las procesa al volver |
+
+Las lecturas (`CONSULTA`, `DISPONIBLES`) se reintentan; `RESERVAR` se manda una sola vez desde el RMC.
+**Limitación conocida:** si un RMC se congela (no muere) con una reserva en cola, el gestor la reenvía a otro RMC y, cuando el congelado despierta, también la aplica: la reserva queda duplicada. Se corrige con un id único por solicitud que la persistencia no aplique dos veces.
+
+## 9. Qué muestra cada consola
 - **Persistencia:** cada orden que recibe, y la BD completa (tabla de eventos y tabla de reservas) al arrancar y después de cada reserva o cancelación (`Evento: E5 | Fecha: 2026-11-02 | Libres: 97 | Ocupados: 3` y `Reserva 1 | Evento: E5 | Fecha: 2026-11-02 | Cliente: juan | Asientos: 3`).
 - **RMC:** cada solicitud, lo que le pregunta a la persistencia y el resultado (ÉXITO o RECHAZO).
 - **Gestor:** cada solicitud y respuesta; cada minuto el TPM.

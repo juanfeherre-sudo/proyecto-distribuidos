@@ -5,46 +5,52 @@
 #include <sstream>
 #include <string>
 
-// le manda una orden a la persistencia y espera la respuesta
-std::string pedirAPersistencia(zmq::socket_t& socketPersistencia, const std::string& orden) {
+// le manda una orden a la persistencia y espera la respuesta.
+// Si la persistencia no contesta a tiempo se reintenta (Lazy Pirate); si se agotan
+// los intentos devuelve vacio (nullopt) y el RMC responde RECHAZO en vez de quedarse colgado.
+std::optional<std::string> pedirAPersistencia(ReqConReintento& persistencia, const std::string& orden,
+                                              int intentos = 0) {
     std::cout << "[RMC]   -> Persistencia: " << orden << std::endl;
-    socketPersistencia.send(zmq::buffer(orden), zmq::send_flags::none);
-
-    zmq::message_t resp;
-    auto res = socketPersistencia.recv(resp, zmq::recv_flags::none);
-    std::string respuesta(static_cast<char*>(resp.data()), resp.size());
-    if (orden.substr(0, 8) != "CONSULTA") {
-        std::cout << "[RMC]   <- Persistencia: " << respuesta << std::endl;
+    auto respuesta = persistencia.pedir(orden, intentos);
+    if (respuesta && orden.substr(0, 8) != "CONSULTA") {
+        std::cout << "[RMC]   <- Persistencia: " << *respuesta << std::endl;
     }
     return respuesta;
 }
 
 // consulta: se le pide a persistencia y se devuelve la lista al gestor
-std::string consultar(zmq::socket_t& socketPersistencia, const std::string& mes) {
-    std::string lista = pedirAPersistencia(socketPersistencia, "CONSULTA " + mes);
-    if (lista.empty()) return "RECHAZO: no hay eventos en " + mes;
-    return "EXITO\n" + lista;
+std::string consultar(ReqConReintento& persistencia, const std::string& mes) {
+    auto lista = pedirAPersistencia(persistencia, "CONSULTA " + mes);
+    if (!lista) return "RECHAZO: la persistencia no responde";
+    if (lista->empty()) return "RECHAZO: no hay eventos en " + mes;
+    return "EXITO\n" + *lista;
 }
 
 // reserva: primero pregunta cuantos asientos hay libres, si alcanzan manda a reservar
-std::string reservar(zmq::socket_t& socketPersistencia, const std::string& idEvento,
+std::string reservar(ReqConReintento& persistencia, const std::string& idEvento,
                      const std::string& fecha, const std::string& cliente, int numAsientos) {
     if (numAsientos <= 0) return "RECHAZO: numero de asientos invalido";
 
-    int libres = std::stoi(pedirAPersistencia(socketPersistencia, "DISPONIBLES " + idEvento + " " + fecha));
+    // DISPONIBLES es una lectura: si se pierde la respuesta, preguntar otra vez no daña nada
+    auto disp = pedirAPersistencia(persistencia, "DISPONIBLES " + idEvento + " " + fecha);
+    if (!disp) return "RECHAZO: la persistencia no responde";
+    int libres = std::stoi(*disp);
     if (libres < 0)
         return "RECHAZO: el evento " + idEvento + " no tiene ocurrencia el " + fecha;
     if (libres < numAsientos)
         return "RECHAZO: solo hay " + std::to_string(libres) + " asientos libres";
 
-    std::string r = pedirAPersistencia(socketPersistencia,
-        "RESERVAR " + idEvento + " " + fecha + " " + cliente + " " + std::to_string(numAsientos));
+    // RESERVAR es una escritura: se manda UNA sola vez (intentos = 1). Si la persistencia
+    // la aplico pero la respuesta se perdio, reenviarla reservaria dos veces.
+    auto r = pedirAPersistencia(persistencia,
+        "RESERVAR " + idEvento + " " + fecha + " " + cliente + " " + std::to_string(numAsientos), 1);
+    if (!r) return "RECHAZO: la persistencia no responde";
 
     // si otro cliente reservo justo antes, persistencia responde SIN_CUPO
-    if (r.rfind("OK", 0) == 0)
-        return "EXITO: reserva " + r.substr(3) + " de " + std::to_string(numAsientos) +
+    if (r->rfind("OK", 0) == 0)
+        return "EXITO: reserva " + r->substr(3) + " de " + std::to_string(numAsientos) +
                " asientos en " + idEvento + " el " + fecha;
-    return "RECHAZO: " + r;
+    return "RECHAZO: " + *r;
 }
 
 int main() {
@@ -57,9 +63,10 @@ int main() {
     socketGestor.connect(direccion(cfg["GESTOR_IP"], cfg["RMC_BACKEND_PUERTO"]));
     socketGestor.connect(direccion(cfg["GESTOR_IP"], cfg["RMC_BACKEND2_PUERTO"]));
 
-    // Socket REQ para la persistencia (VM3)
-    zmq::socket_t socketPersistencia(context, ZMQ_REQ);
-    socketPersistencia.connect(direccion(cfg["PERSISTENCIA_IP"], cfg["PERSISTENCIA_PUERTO"]));
+    // REQ hacia la persistencia (VM3), con tiempo de espera y reintento
+    ReqConReintento persistencia(context,
+        {direccion(cfg["PERSISTENCIA_IP"], cfg["PERSISTENCIA_PUERTO"])},
+        std::stoi(cfg["ESPERA_PERSISTENCIA_MS"]), std::stoi(cfg["INTENTOS_PERSISTENCIA"]), "RMC");
 
     std::cout << "RMC conectado a los gestores (" << cfg["RMC_BACKEND_PUERTO"] << " y "
               << cfg["RMC_BACKEND2_PUERTO"] << ") y a persistencia en "
@@ -81,12 +88,12 @@ int main() {
             if (comando == "CONSULTA") {
                 std::string mes;
                 iss >> mes;
-                respuesta = consultar(socketPersistencia, mes);
+                respuesta = consultar(persistencia, mes);
             } else if (comando == "RESERVA") {
                 std::string idEvento, fecha, cliente;
                 int numAsientos = 0;
                 iss >> idEvento >> fecha >> cliente >> numAsientos;
-                respuesta = reservar(socketPersistencia, idEvento, fecha, cliente, numAsientos);
+                respuesta = reservar(persistencia, idEvento, fecha, cliente, numAsientos);
             } else if (comando == "MODIFICACION") {
                 respuesta = "RECHAZO: la modificacion se implementa en la segunda entrega";
             } else {
