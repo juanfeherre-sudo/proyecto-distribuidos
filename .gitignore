@@ -8,7 +8,7 @@ persistencia
 *.db
 # Archivos que se generan al correr
 metricas_*.csv
-tpm.csv
+tpm_gestor*.csv
 # Respaldos del editor
 *.save
 *~

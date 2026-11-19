@@ -1,11 +1,25 @@
 // Persistencia (VM3): unico proceso que maneja la base de datos reserva.db
 // ./persistencia init_db.sql   -> carga la base de datos desde cero
+// ./persistencia               -> usa la BD que ya hay (si esta vacia carga init_db.sql)
+//
+// Ordenes que recibe (REP):
+//   CONSULTA <mes>                                         -> una linea por evento del mes
+//   DISPONIBLES <evento> <fecha>                           -> asientos libres, -1 si no existe
+//   RESERVAR  <idSol> <evento> <fecha> <cliente> <n>       -> OK <idReserva> | SIN_CUPO
+//   MODIFICAR <idSol> <evento> <fecha> <cliente> <nuevaFecha> <n>
+//                                       -> OK <idReserva> <asientosAntes> | NO_EXISTE | NO_OCURRENCIA | SIN_CUPO <libres>
+//   ELIMINAR  <idSol> <evento> <fecha> <cliente>           -> Reserva cancelada... | No se encontro reserva...
+//
+// Las escrituras llevan el idSol de la solicitud: si la misma solicitud llega dos veces
+// (un reintento de Lazy Pirate), no se aplica otra vez: se devuelve la respuesta de la primera.
 
 #include <zmq.hpp>
 #include <iostream>
 #include <sstream>
 #include <fstream>
 #include <string>
+#include <functional>
+#include <optional>
 #include <sqlite3.h>
 #include "common.hpp"
 
@@ -24,8 +38,20 @@ void cargarBD(const std::string& archivoSql) {
     sqlite3* db;
     sqlite3_open(BD, &db);
     sqlite3_exec(db, contenido.str().c_str(), nullptr, nullptr, nullptr);
+    // la BD empieza de cero: tambien se olvidan las solicitudes ya aplicadas
+    sqlite3_exec(db, "DROP TABLE IF EXISTS Solicitudes;", nullptr, nullptr, nullptr);
     sqlite3_close(db);
     std::cout << "BD cargada desde " << archivoSql << std::endl;
+}
+
+// Tabla con las solicitudes de escritura ya aplicadas y lo que se respondio.
+// Es lo que evita duplicados cuando una solicitud se reenvia.
+void prepararSolicitudes() {
+    sqlite3* db;
+    sqlite3_open(BD, &db);
+    sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS Solicitudes (idSol TEXT PRIMARY KEY, respuesta TEXT);",
+                 nullptr, nullptr, nullptr);
+    sqlite3_close(db);
 }
 
 // cuantas filas hay en Eventos (-1 si la tabla no existe)
@@ -123,9 +149,7 @@ std::string consultarEventos(const std::string& mes) {
 }
 
 // asientos libres de un evento en una fecha, -1 si no existe
-std::string disponibles(const std::string& idEvento, const std::string& fecha) {
-    sqlite3* db;
-    sqlite3_open(BD, &db);
+std::string disponiblesEn(sqlite3* db, const std::string& idEvento, const std::string& fecha) {
     sqlite3_stmt* stmt;
     sqlite3_prepare_v2(db, "SELECT asientosLibres FROM Eventos WHERE idEvento=? AND fecha=?;", -1, &stmt, nullptr);
     sqlite3_bind_text(stmt, 1, idEvento.c_str(), -1, SQLITE_TRANSIENT);
@@ -135,37 +159,97 @@ std::string disponibles(const std::string& idEvento, const std::string& fecha) {
         libres = sqlite3_column_int(stmt, 0);
     }
     sqlite3_finalize(stmt);
-    sqlite3_close(db);
     return std::to_string(libres);
 }
 
-// guarda la reserva. El RMC ya reviso que hay cupo, pero se vuelve a revisar en el UPDATE
-// (asientosLibres >= ?) por si otro cliente reservo justo antes, asi no se venden mas de 100.
-// Va en una transaccion: o se hacen el UPDATE y el INSERT, o ninguno.
-std::string reservarAsientos(const std::string& idEvento, const std::string& fecha,
-                             const std::string& cliente, int numAsientos) {
+std::string disponibles(const std::string& idEvento, const std::string& fecha) {
     sqlite3* db;
     sqlite3_open(BD, &db);
-    sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+    std::string libres = disponiblesEn(db, idEvento, fecha);
+    sqlite3_close(db);
+    return libres;
+}
 
+// ---------------------------------------------------------------------------
+// Escrituras sin duplicar.
+// Cada escritura devuelve si se aplico y que se responde. sinDuplicar() la corre
+// dentro de una transaccion y guarda la respuesta junto a su idSol:
+//   - si el idSol ya estaba, no escribe nada y devuelve la respuesta guardada
+//   - si se aplico, COMMIT de los cambios y de la respuesta, juntos
+//   - si se rechazo, ROLLBACK (no queda nada a medias) y solo se guarda la respuesta
+// ---------------------------------------------------------------------------
+struct Resultado {
+    bool aplicado;
+    std::string respuesta;
+};
+
+std::optional<std::string> respuestaAnterior(sqlite3* db, const std::string& idSol) {
     sqlite3_stmt* stmt;
-    sqlite3_prepare_v2(db, "UPDATE Eventos SET asientosLibres = asientosLibres - ?, "
-                           "asientosOcupados = asientosOcupados + ? "
-                           "WHERE idEvento=? AND fecha=? AND asientosLibres >= ?;", -1, &stmt, nullptr);
-    sqlite3_bind_int(stmt, 1, numAsientos);
-    sqlite3_bind_int(stmt, 2, numAsientos);
-    sqlite3_bind_text(stmt, 3, idEvento.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 4, fecha.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 5, numAsientos);
+    sqlite3_prepare_v2(db, "SELECT respuesta FROM Solicitudes WHERE idSol=?;", -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, idSol.c_str(), -1, SQLITE_TRANSIENT);
+    std::optional<std::string> respuesta;
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+        respuesta = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+    sqlite3_finalize(stmt);
+    return respuesta;
+}
+
+void guardarSolicitud(sqlite3* db, const std::string& idSol, const std::string& respuesta) {
+    sqlite3_stmt* stmt;
+    sqlite3_prepare_v2(db, "INSERT INTO Solicitudes (idSol, respuesta) VALUES (?, ?);", -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, idSol.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, respuesta.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
+}
 
-    if (sqlite3_changes(db) == 0) {   // no cambio ninguna fila: no habia cupo
+std::string sinDuplicar(const std::string& idSol, const std::function<Resultado(sqlite3*)>& escribir) {
+    sqlite3* db;
+    sqlite3_open(BD, &db);
+    sqlite3_exec(db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr);
+
+    auto anterior = respuestaAnterior(db, idSol);
+    if (anterior) {
         sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
         sqlite3_close(db);
-        return "SIN_CUPO";
+        std::cout << "[Persistencia] Solicitud " << idSol
+                  << " repetida: no se aplica otra vez, se devuelve la respuesta anterior" << std::endl;
+        return *anterior;
     }
 
+    Resultado r = escribir(db);
+    if (!r.aplicado) {   // rechazada: se deshace lo que alcanzo a cambiar
+        sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+    }
+    guardarSolicitud(db, idSol, r.respuesta);
+    sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+    sqlite3_close(db);
+    return r.respuesta;
+}
+
+// suma o resta asientos libres de una ocurrencia; con 'soloSiAlcanza' no deja quedar negativos.
+// Devuelve cuantas filas cambio (0 = no existe o no alcanzaban los asientos)
+int moverAsientos(sqlite3* db, const std::string& idEvento, const std::string& fecha,
+                  int libresQueSalen, bool soloSiAlcanza) {
+    sqlite3_stmt* stmt;
+    std::string sql = "UPDATE Eventos SET asientosLibres = asientosLibres - ?, "
+                      "asientosOcupados = asientosOcupados + ? WHERE idEvento=? AND fecha=?";
+    if (soloSiAlcanza) sql += " AND asientosLibres >= ?";
+    sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, libresQueSalen);
+    sqlite3_bind_int(stmt, 2, libresQueSalen);
+    sqlite3_bind_text(stmt, 3, idEvento.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, fecha.c_str(), -1, SQLITE_TRANSIENT);
+    if (soloSiAlcanza) sqlite3_bind_int(stmt, 5, libresQueSalen);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return sqlite3_changes(db);
+}
+
+long long insertarReserva(sqlite3* db, const std::string& idEvento, const std::string& fecha,
+                          const std::string& cliente, int numAsientos) {
+    sqlite3_stmt* stmt;
     sqlite3_prepare_v2(db, "INSERT INTO Reservas (idEvento, fecha, cliente, numAsientos) VALUES (?, ?, ?, ?);",
                        -1, &stmt, nullptr);
     sqlite3_bind_text(stmt, 1, idEvento.c_str(), -1, SQLITE_TRANSIENT);
@@ -174,54 +258,77 @@ std::string reservarAsientos(const std::string& idEvento, const std::string& fec
     sqlite3_bind_int(stmt, 4, numAsientos);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
-    long long idReserva = sqlite3_last_insert_rowid(db);
-    sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
-
-    imprimirFila(db, idEvento, fecha);
-    sqlite3_close(db);
-    return "OK " + std::to_string(idReserva);
+    return sqlite3_last_insert_rowid(db);
 }
 
-// borra las reservas de un cliente en un evento y fecha, y devuelve los asientos (2a entrega)
-std::string eliminarReserva(const std::string& idEvento, const std::string& fecha, const std::string& cliente) {
-    sqlite3* db;
-    sqlite3_open(BD, &db);
-
-    int totalSillas = 0;
+// asientos que tiene un cliente reservados en un evento y fecha (0 si no tiene)
+int asientosDelCliente(sqlite3* db, const std::string& idEvento, const std::string& fecha,
+                       const std::string& cliente) {
     sqlite3_stmt* stmt;
-    sqlite3_prepare_v2(db, "SELECT SUM(numAsientos) FROM Reservas WHERE idEvento=? AND fecha=? AND cliente=?;",
+    sqlite3_prepare_v2(db, "SELECT IFNULL(SUM(numAsientos),0) FROM Reservas WHERE idEvento=? AND fecha=? AND cliente=?;",
                        -1, &stmt, nullptr);
     sqlite3_bind_text(stmt, 1, idEvento.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, fecha.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 3, cliente.c_str(), -1, SQLITE_TRANSIENT);
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        totalSillas = sqlite3_column_int(stmt, 0);
-    }
+    int total = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) total = sqlite3_column_int(stmt, 0);
     sqlite3_finalize(stmt);
+    return total;
+}
 
-    if (totalSillas == 0) {
-        sqlite3_close(db);
-        return "No se encontro reserva para eliminar";
-    }
-
+void borrarReservasDelCliente(sqlite3* db, const std::string& idEvento, const std::string& fecha,
+                              const std::string& cliente) {
+    sqlite3_stmt* stmt;
     sqlite3_prepare_v2(db, "DELETE FROM Reservas WHERE idEvento=? AND fecha=? AND cliente=?;", -1, &stmt, nullptr);
     sqlite3_bind_text(stmt, 1, idEvento.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, fecha.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 3, cliente.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
+}
 
-    sqlite3_prepare_v2(db, "UPDATE Eventos SET asientosLibres = asientosLibres + ?, "
-                           "asientosOcupados = asientosOcupados - ? WHERE idEvento=? AND fecha=?;", -1, &stmt, nullptr);
-    sqlite3_bind_int(stmt, 1, totalSillas);
-    sqlite3_bind_int(stmt, 2, totalSillas);
-    sqlite3_bind_text(stmt, 3, idEvento.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 4, fecha.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
+// guarda la reserva. El RMC ya reviso que hay cupo, pero se vuelve a revisar en el UPDATE
+// (asientosLibres >= ?) por si otro cliente reservo justo antes, asi no se venden mas de 100.
+Resultado reservarAsientos(sqlite3* db, const std::string& idEvento, const std::string& fecha,
+                           const std::string& cliente, int numAsientos) {
+    if (moverAsientos(db, idEvento, fecha, numAsientos, true) == 0)   // no habia cupo
+        return {false, "SIN_CUPO"};
+    long long idReserva = insertarReserva(db, idEvento, fecha, cliente, numAsientos);
+    imprimirFila(db, idEvento, fecha);
+    return {true, "OK " + std::to_string(idReserva)};
+}
 
-    sqlite3_close(db);
-    return "Reserva cancelada. Se liberaron " + std::to_string(totalSillas) + " asientos";
+// cambia la reserva de un cliente en un evento y fecha: a otra fecha del mismo evento
+// y/o a otro numero de asientos. Primero devuelve los asientos que tenia y luego toma
+// los nuevos; si no alcanzan, sinDuplicar() deshace todo y la reserva queda como estaba.
+// Si el cliente tenia varias reservas para esa fecha, quedan unidas en una sola.
+Resultado modificarReserva(sqlite3* db, const std::string& idEvento, const std::string& fecha,
+                           const std::string& cliente, const std::string& nuevaFecha, int numAsientos) {
+    int antes = asientosDelCliente(db, idEvento, fecha, cliente);
+    if (antes == 0) return {false, "NO_EXISTE"};
+    if (numAsientos <= 0) return {false, "ASIENTOS_INVALIDOS"};
+
+    moverAsientos(db, idEvento, fecha, -antes, false);                 // devolver los que tenia
+    if (moverAsientos(db, idEvento, nuevaFecha, numAsientos, true) == 0) {
+        int libres = std::stoi(disponiblesEn(db, idEvento, nuevaFecha));
+        if (libres < 0) return {false, "NO_OCURRENCIA"};
+        return {false, "SIN_CUPO " + std::to_string(libres)};
+    }
+    borrarReservasDelCliente(db, idEvento, fecha, cliente);
+    long long idReserva = insertarReserva(db, idEvento, nuevaFecha, cliente, numAsientos);
+    imprimirFila(db, idEvento, nuevaFecha);
+    return {true, "OK " + std::to_string(idReserva) + " " + std::to_string(antes)};
+}
+
+// borra las reservas de un cliente en un evento y fecha y devuelve los asientos
+Resultado eliminarReserva(sqlite3* db, const std::string& idEvento, const std::string& fecha,
+                          const std::string& cliente) {
+    int totalSillas = asientosDelCliente(db, idEvento, fecha, cliente);
+    if (totalSillas == 0) return {false, "No se encontro reserva para eliminar"};
+
+    borrarReservasDelCliente(db, idEvento, fecha, cliente);
+    moverAsientos(db, idEvento, fecha, -totalSillas, false);
+    return {true, "Reserva cancelada. Se liberaron " + std::to_string(totalSillas) + " asientos"};
 }
 
 int main(int argc, char* argv[]) {
@@ -230,6 +337,7 @@ int main(int argc, char* argv[]) {
     // si le pasan un .sql lo carga, si la BD esta vacia carga init_db.sql
     if (argc > 1) cargarBD(argv[1]);
     else if (contarEventos() <= 0) cargarBD("init_db.sql");
+    prepararSolicitudes();
     imprimirEstado();
 
     zmq::context_t context(1);
@@ -262,15 +370,24 @@ int main(int argc, char* argv[]) {
             iss >> idEvento >> fecha;
             respuesta = disponibles(idEvento, fecha);
         } else if (cmd == "RESERVAR") {
-            std::string idEvento, fecha, cliente;
+            std::string idSol, idEvento, fecha, cliente;
             int numAsientos = 0;
-            iss >> idEvento >> fecha >> cliente >> numAsientos;
-            respuesta = reservarAsientos(idEvento, fecha, cliente, numAsientos);
+            iss >> idSol >> idEvento >> fecha >> cliente >> numAsientos;
+            respuesta = sinDuplicar(idSol, [&](sqlite3* db) {
+                return reservarAsientos(db, idEvento, fecha, cliente, numAsientos); });
             imprimirEstado();   // se muestra la BD actualizada despues de cada reserva
+        } else if (cmd == "MODIFICAR") {
+            std::string idSol, idEvento, fecha, cliente, nuevaFecha;
+            int numAsientos = 0;
+            iss >> idSol >> idEvento >> fecha >> cliente >> nuevaFecha >> numAsientos;
+            respuesta = sinDuplicar(idSol, [&](sqlite3* db) {
+                return modificarReserva(db, idEvento, fecha, cliente, nuevaFecha, numAsientos); });
+            imprimirEstado();   // y despues de cada modificacion
         } else if (cmd == "ELIMINAR") {
-            std::string idEvento, fecha, cliente;
-            iss >> idEvento >> fecha >> cliente;
-            respuesta = eliminarReserva(idEvento, fecha, cliente);
+            std::string idSol, idEvento, fecha, cliente;
+            iss >> idSol >> idEvento >> fecha >> cliente;
+            respuesta = sinDuplicar(idSol, [&](sqlite3* db) {
+                return eliminarReserva(db, idEvento, fecha, cliente); });
             imprimirEstado();   // y despues de cada cancelacion
         } else if (cmd == "ESTADO") {
             imprimirEstado();

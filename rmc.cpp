@@ -1,19 +1,30 @@
-// RMC (VM2): revisa disponibilidad con la persistencia y decide si la reserva se hace
+// RMC (VM2): reglas de negocio de consulta, reserva y modificacion. Nunca toca la BD:
+// todo se lo pide a la persistencia.
+//
+// uso: ./rmc 1   ./rmc 2   ./rmc 3   (el numero solo distingue los logs)
+//
+// Recibe del gestor (el idSol lo pone el cliente y sirve para no aplicar dos veces una escritura):
+//   CONSULTA     <idSol> <mes>
+//   RESERVA      <idSol> <evento> <fecha> <cliente> <asientos>
+//   MODIFICACION <idSol> <evento> <fecha> <cliente> <nuevaFecha> <asientos>
+// Responde EXITO... o RECHAZO: <motivo>
 
 #include "common.hpp"
 #include <iostream>
 #include <sstream>
 #include <string>
 
+std::string ETIQUETA = "[RMC]";   // en main pasa a ser [RMC-1], [RMC-2]...
+
 // le manda una orden a la persistencia y espera la respuesta.
 // Si la persistencia no contesta a tiempo se reintenta (Lazy Pirate); si se agotan
 // los intentos devuelve vacio (nullopt) y el RMC responde RECHAZO en vez de quedarse colgado.
 std::optional<std::string> pedirAPersistencia(ReqConReintento& persistencia, const std::string& orden,
                                               int intentos = 0) {
-    std::cout << "[RMC]   -> Persistencia: " << orden << std::endl;
+    std::cout << ETIQUETA << "   -> Persistencia: " << orden << std::endl;
     auto respuesta = persistencia.pedir(orden, intentos);
     if (respuesta && orden.substr(0, 8) != "CONSULTA") {
-        std::cout << "[RMC]   <- Persistencia: " << *respuesta << std::endl;
+        std::cout << ETIQUETA << "   <- Persistencia: " << *respuesta << std::endl;
     }
     return respuesta;
 }
@@ -27,7 +38,7 @@ std::string consultar(ReqConReintento& persistencia, const std::string& mes) {
 }
 
 // reserva: primero pregunta cuantos asientos hay libres, si alcanzan manda a reservar
-std::string reservar(ReqConReintento& persistencia, const std::string& idEvento,
+std::string reservar(ReqConReintento& persistencia, const std::string& idSol, const std::string& idEvento,
                      const std::string& fecha, const std::string& cliente, int numAsientos) {
     if (numAsientos <= 0) return "RECHAZO: numero de asientos invalido";
 
@@ -40,10 +51,10 @@ std::string reservar(ReqConReintento& persistencia, const std::string& idEvento,
     if (libres < numAsientos)
         return "RECHAZO: solo hay " + std::to_string(libres) + " asientos libres";
 
-    // RESERVAR es una escritura: se manda UNA sola vez (intentos = 1). Si la persistencia
-    // la aplico pero la respuesta se perdio, reenviarla reservaria dos veces.
+    // RESERVAR es una escritura, pero lleva el idSol: si se reenvia porque la respuesta
+    // se perdio, la persistencia la reconoce y no la aplica dos veces
     auto r = pedirAPersistencia(persistencia,
-        "RESERVAR " + idEvento + " " + fecha + " " + cliente + " " + std::to_string(numAsientos), 1);
+        "RESERVAR " + idSol + " " + idEvento + " " + fecha + " " + cliente + " " + std::to_string(numAsientos));
     if (!r) return "RECHAZO: la persistencia no responde";
 
     // si otro cliente reservo justo antes, persistencia responde SIN_CUPO
@@ -53,7 +64,34 @@ std::string reservar(ReqConReintento& persistencia, const std::string& idEvento,
     return "RECHAZO: " + *r;
 }
 
-int main() {
+// modificacion: cambia la reserva del cliente en ese evento y fecha a otra fecha del mismo
+// evento (puede ser la misma) y/o a otro numero de asientos. Si no se puede, la reserva
+// queda como estaba: la persistencia lo hace todo en una transaccion.
+std::string modificar(ReqConReintento& persistencia, const std::string& idSol, const std::string& idEvento,
+                      const std::string& fecha, const std::string& cliente,
+                      const std::string& nuevaFecha, int numAsientos) {
+    if (numAsientos <= 0) return "RECHAZO: numero de asientos invalido";
+
+    auto r = pedirAPersistencia(persistencia,
+        "MODIFICAR " + idSol + " " + idEvento + " " + fecha + " " + cliente + " " + nuevaFecha + " " +
+        std::to_string(numAsientos));
+    if (!r) return "RECHAZO: la persistencia no responde";
+
+    auto p = partir(*r);   // OK <idReserva> <asientosAntes> | NO_EXISTE | NO_OCURRENCIA | SIN_CUPO <libres>
+    if (p.size() == 3 && p[0] == "OK")
+        return "EXITO: reserva " + p[1] + " de " + cliente + " ahora es de " + std::to_string(numAsientos) +
+               " asientos en " + idEvento + " el " + nuevaFecha + " (antes " + p[2] + " el " + fecha + ")";
+    if (!p.empty() && p[0] == "NO_EXISTE")
+        return "RECHAZO: " + cliente + " no tiene reserva en " + idEvento + " el " + fecha;
+    if (!p.empty() && p[0] == "NO_OCURRENCIA")
+        return "RECHAZO: el evento " + idEvento + " no tiene ocurrencia el " + nuevaFecha;
+    if (p.size() == 2 && p[0] == "SIN_CUPO")
+        return "RECHAZO: solo hay " + p[1] + " asientos libres el " + nuevaFecha + "; la reserva queda como estaba";
+    return "RECHAZO: " + *r;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc > 1) ETIQUETA = "[RMC-" + std::string(argv[1]) + "]";
     auto cfg = leerConfig();
     zmq::context_t context(1);
 
@@ -80,26 +118,22 @@ int main() {
         zmq::message_t request;
         if (!socketGestor.recv(request, zmq::recv_flags::none)) continue;   // no llego nada en 1 s
         std::string msg(static_cast<char*>(request.data()), request.size());
-        std::cout << "[RMC] Recibido: " << msg << std::endl;
+        std::cout << ETIQUETA << " Recibido: " << msg << std::endl;
 
-        // Interpretar comando
-        std::istringstream iss(msg);
-        std::string comando;
-        iss >> comando;
+        // Interpretar comando: siempre <COMANDO> <idSol> <datos...>
+        auto p = partir(msg);
+        std::string comando = p.empty() ? "" : p[0];
         std::string respuesta;
 
         try {
-            if (comando == "CONSULTA") {
-                std::string mes;
-                iss >> mes;
-                respuesta = consultar(persistencia, mes);
-            } else if (comando == "RESERVA") {
-                std::string idEvento, fecha, cliente;
-                int numAsientos = 0;
-                iss >> idEvento >> fecha >> cliente >> numAsientos;
-                respuesta = reservar(persistencia, idEvento, fecha, cliente, numAsientos);
-            } else if (comando == "MODIFICACION") {
-                respuesta = "RECHAZO: la modificacion se implementa en la segunda entrega";
+            if (comando == "CONSULTA" && p.size() == 3) {
+                respuesta = consultar(persistencia, p[2]);
+            } else if (comando == "RESERVA" && p.size() == 6) {
+                respuesta = reservar(persistencia, p[1], p[2], p[3], p[4], std::stoi(p[5]));
+            } else if (comando == "MODIFICACION" && p.size() == 7) {
+                respuesta = modificar(persistencia, p[1], p[2], p[3], p[4], p[5], std::stoi(p[6]));
+            } else if (comando == "CONSULTA" || comando == "RESERVA" || comando == "MODIFICACION") {
+                respuesta = "RECHAZO: formato invalido";
             } else {
                 respuesta = "RECHAZO: comando no reconocido";
             }
@@ -107,7 +141,7 @@ int main() {
             respuesta = "RECHAZO: formato invalido";
         }
 
-        std::cout << "[RMC] Resultado: " << respuesta.substr(0, respuesta.find('\n')) << std::endl;
+        std::cout << ETIQUETA << " Resultado: " << respuesta.substr(0, respuesta.find('\n')) << std::endl;
         socketGestor.send(zmq::buffer(respuesta), zmq::send_flags::none);
     }
 }

@@ -1,11 +1,17 @@
-// Gestor de transacciones (VM2)
-// consulta y reserva van al RMC, las cancelaciones van a cancelaciones por PUSH
+// Gestor de transacciones (VM2): la puerta de entrada. No aplica reglas, solo enruta:
+//   CONSULTA, RESERVA, MODIFICACION -> a un RMC (sincrono) y devuelve su respuesta
+//   ELIMINAR                        -> a cancelaciones por PUSH y responde RECIBIDO de una vez
+// Tambien cuenta las transacciones por minuto (TPM) y las guarda en tpm_gestor<N>.csv.
+//
+// uso: ./gestor     (principal: clientes en GESTOR_PUERTO, RMC en RMC_BACKEND_PUERTO)
+//      ./gestor 2   (respaldo:  clientes en GESTOR2_PUERTO, RMC en RMC_BACKEND2_PUERTO)
 
 #include "common.hpp"
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <ctime>
+#include <map>
 
 int main(int argc, char* argv[]) {
     auto cfg = leerConfig();
@@ -45,15 +51,31 @@ int main(int argc, char* argv[]) {
     zmq::socket_t socketCancelacion(context, ZMQ_PUSH);
     socketCancelacion.connect(direccion(cfg["CANCELACION_IP"], cfg["CANCELACION_PUERTO"]));
 
-    // contadores para las transacciones por minuto (TPM)
-    int consultasMinuto = 0;
-    int reservasMinuto = 0;
+    // contadores para las transacciones por minuto (TPM): solo cuentan las que salen con EXITO.
+    // Cada minuto se escribe una linea en tpm_gestor1.csv (o tpm_gestor2.csv) para las graficas.
+    std::map<std::string, int> tpm;
     time_t inicioMinuto = time(nullptr);
+    std::string archivoTPM = std::string("tpm_gestor") + (esRespaldo ? "2" : "1") + ".csv";
+    {
+        std::ifstream existe(archivoTPM);
+        if (!existe) std::ofstream(archivoTPM) << "hora,consultas,reservas,modificaciones\n";
+    }
 
     avisarListo();   // a systemd: ya hice los bind, estoy listo
 
     while (true) {
         avisarVivo();   // watchdog: cada vuelta, al menos una por segundo, systemd sabe que sigue bien
+
+        // cada minuto se guarda el TPM y se reinician los contadores (se revisa en cada vuelta,
+        // asi el minuto se cierra a tiempo aunque no lleguen solicitudes)
+        if (time(nullptr) - inicioMinuto >= 60) {
+            std::cout << "[Gestor] TPM -> consultas: " << tpm["CONSULTA"] << " reservas: " << tpm["RESERVA"]
+                      << " modificaciones: " << tpm["MODIFICACION"] << std::endl;
+            std::ofstream(archivoTPM, std::ios::app) << hora() << "," << tpm["CONSULTA"] << ","
+                << tpm["RESERVA"] << "," << tpm["MODIFICACION"] << "\n";
+            tpm.clear();
+            inicioMinuto += 60;
+        }
 
         // Recibir solicitud del cliente (si no llega nada en PULSO_MS, se vuelve a esperar)
         zmq::message_t request;
@@ -80,10 +102,7 @@ int main(int argc, char* argv[]) {
             }
             if (respuesta.empty()) respuesta = "RECHAZO: ningun RMC respondio";
 
-            if (respuesta.substr(0, 5) == "EXITO") {
-                if (tipo == "CONSULTA") consultasMinuto++;
-                if (tipo == "RESERVA") reservasMinuto++;
-            }
+            if (respuesta.substr(0, 5) == "EXITO") tpm[tipo]++;
         } else if (tipo == "ELIMINAR") {
             // se manda a cancelaciones y se responde de una vez, sin esperar
             socketCancelacion.send(zmq::buffer(msg), zmq::send_flags::none);
@@ -95,14 +114,5 @@ int main(int argc, char* argv[]) {
         // Enviar respuesta al cliente
         std::cout << "[Gestor] Respuesta enviada al cliente" << std::endl;
         socketClientes.send(zmq::buffer(respuesta), zmq::send_flags::none);
-
-        // cada minuto se muestra el TPM y se reinician los contadores
-        if (time(nullptr) - inicioMinuto >= 60) {
-            std::cout << "[Gestor] TPM -> consultas: " << consultasMinuto
-                      << " reservas: " << reservasMinuto << std::endl;
-            consultasMinuto = 0;
-            reservasMinuto = 0;
-            inicioMinuto = time(nullptr);
-        }
     }
 }
