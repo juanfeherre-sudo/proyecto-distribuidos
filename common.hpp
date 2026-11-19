@@ -155,10 +155,9 @@ inline void log(const std::string& quien, const std::string& texto) {
 // dirección de la lista y se reenvía el MISMO mensaje.
 //
 // Es el patrón "Lazy Pirate" de la guía de ZeroMQ.
-// OJO: reenviar una escritura (una reserva) puede duplicarla si la primera sí
-// se aplicó y lo que se perdió fue la respuesta. Por eso pedir() deja indicar
-// cuántos intentos se hacen: las lecturas se reintentan, las escrituras no,
-// hasta que el protocolo tenga un id único por solicitud.
+// Reenviar una escritura (una reserva) es seguro porque cada solicitud lleva un
+// idSol único que pone el cliente: si la primera sí se aplicó y lo que se perdió
+// fue la respuesta, la persistencia reconoce el idSol y no la aplica otra vez.
 // ---------------------------------------------------------------------------
 class ReqConReintento {
 public:
